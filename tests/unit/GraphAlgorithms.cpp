@@ -57,7 +57,7 @@ BOOST_AUTO_TEST_CASE(GetBackedgesTest) {
   // Create the graph
   using NodeType = ForwardNode<MyForwardNode>;
   auto LG = createGraph<NodeType>();
-  using EdgeDescriptor = graphs::detail::EdgeDescriptor<NodeType>;
+  using EdgeDescriptor = revng::detail::EdgeDescriptor<NodeType>;
 
   // Compute the backedges set
   llvm::SmallSet<EdgeDescriptor, 10> Backedges = getBackedges(LG.Entry);

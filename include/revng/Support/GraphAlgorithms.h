@@ -289,7 +289,7 @@ entryPoints(GraphType &&Graph) {
   return Result;
 }
 
-namespace graphs {
+namespace revng {
   namespace detail {
 
   template<class NodeT>
@@ -381,12 +381,12 @@ namespace graphs {
   };
 
   } // namespace detail
-} // namespace graphs
+} // namespace revng
 
 template<class NodeT>
-llvm::SmallSet<graphs::detail::EdgeDescriptor<NodeT>, 10>
+llvm::SmallSet<revng::detail::EdgeDescriptor<NodeT>, 10>
 getBackedges(NodeT *Block) {
-  graphs::detail::DFSBackedgeState<NodeT> State;
+  revng::detail::DFSBackedgeState<NodeT> State;
 
   // Explore the graph in DFS order and mark backedges.
   for (NodeT *Block : llvm::depth_first_ext(Block, State)) {
@@ -399,7 +399,7 @@ getBackedges(NodeT *Block) {
 
 template<class NodeT>
 llvm::SmallSet<NodeT *, 10> findReachableBlocks(NodeT *Source, NodeT *Target) {
-  graphs::detail::DFSReachableState<NodeT> State;
+  revng::detail::DFSReachableState<NodeT> State;
 
   // Initialize the visited set with the target node, which is the boundary
   // that we don't want to trepass when finding reachable nodes.
