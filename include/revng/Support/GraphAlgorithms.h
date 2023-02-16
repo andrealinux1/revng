@@ -7,11 +7,13 @@
 #include <set>
 #include <vector>
 
+#include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/GraphTraits.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
 
 #include "revng/Support/Debug.h"
 
@@ -285,4 +287,126 @@ entryPoints(GraphType &&Graph) {
   }
 
   return Result;
+}
+
+namespace graphs {
+  namespace detail {
+
+  template<class NodeT>
+  using StatusMap = llvm::DenseMap<NodeT *, bool>;
+
+  template<class NodeT>
+  using EdgeDescriptor = std::pair<NodeT *, NodeT *>;
+
+  template<class NodeT>
+  class DFState : public StatusMap<NodeT> {
+    using StatusMap = StatusMap<NodeT>;
+    using EdgeDescriptor = EdgeDescriptor<NodeT>;
+
+  protected:
+    // Return the insertion iterator on the underlying map.
+    std::pair<typename StatusMap::iterator, bool> insertInMap(NodeT *Block) {
+      return StatusMap::insert(std::make_pair(Block, true));
+    }
+
+  public:
+    // Invoked after we have processed all children of a node during the DFS.
+    void completed(NodeT *Block) { (*this)[Block] = false; }
+  };
+
+  template<class NodeT>
+  class DFSBackedgeState : public DFState<NodeT> {
+    using StatusMap = StatusMap<NodeT>;
+    using EdgeDescriptor = EdgeDescriptor<NodeT>;
+
+  private:
+    NodeT *CurrentNode = nullptr;
+    llvm::SmallSet<EdgeDescriptor, 10> Backedges;
+
+  public:
+    void setCurrentNode(NodeT *Node) { CurrentNode = Node; }
+    llvm::SmallSet<EdgeDescriptor, 10> getBackedges() { return Backedges; }
+    std::pair<typename StatusMap::iterator, bool> insert(NodeT *Block) {
+
+      // In case we are trying to insert in the `Visited` set a node that is
+      // already on the visit stack, we found a backedge.
+      if (onStack(Block)) {
+        revng_assert(CurrentNode != nullptr);
+        Backedges.insert(std::make_pair(CurrentNode, Block));
+      }
+      return DFState<NodeT>::insertInMap(Block);
+    }
+
+    // Return true if b is currently on the active stack of visit.
+    bool onStack(NodeT *Block) {
+      auto Iter = this->find(Block);
+      return Iter != this->end() && Iter->second;
+    }
+  };
+
+  template<class NodeT>
+  class DFSReachableState : public DFState<NodeT> {
+    using StatusMap = StatusMap<NodeT>;
+    using EdgeDescriptor = EdgeDescriptor<NodeT>;
+
+  private:
+    // Set which contains the desired targets nodes marked as reachable during
+    // the visit.
+    llvm::SmallSet<NodeT *, 10> Targets;
+
+  public:
+    // Insert the initial target node at the beginning of the visit.
+    void insertTarget(NodeT *Block) { Targets.insert(Block); }
+
+    llvm::SmallSet<NodeT *, 10> getReachables() { return Targets; }
+
+    // Customize the `insert` method, in order to add the reachables nodes
+    // during the DFS.
+    std::pair<typename StatusMap::iterator, bool> insert(NodeT *Block) {
+
+      // Check that, if we are trying to insert a block which is the `Targets`
+      // set, we add all the nodes on the current visiting stack in the
+      // `Targets` set.
+      if (Targets.contains(Block)) {
+        for (auto const &[K, V] : *this) {
+          if (V) {
+            Targets.insert(K);
+          }
+        }
+      }
+
+      // Return the insertion iterator as usual.
+      return DFState<NodeT>::insertInMap(Block);
+    }
+  };
+
+  } // namespace detail
+} // namespace graphs
+
+template<class NodeT>
+llvm::SmallSet<graphs::detail::EdgeDescriptor<NodeT>, 10>
+getBackedges(NodeT *Block) {
+  graphs::detail::DFSBackedgeState<NodeT> State;
+
+  // Explore the graph in DFS order and mark backedges.
+  for (NodeT *Block : llvm::depth_first_ext(Block, State)) {
+    State.setCurrentNode((Block));
+    (void) Block;
+  }
+
+  return State.getBackedges();
+}
+
+template<class NodeT>
+llvm::SmallSet<NodeT *, 10> findReachableBlocks(NodeT *Source, NodeT *Target) {
+  graphs::detail::DFSReachableState<NodeT> State;
+
+  // Initialize the visited set with the target node, which is the boundary
+  // that we don't want to trepass when finding reachable nodes.
+  State.insertTarget(Target);
+  for (NodeT *Block : llvm::depth_first_ext(Source, State)) {
+    (void) Block /* Mark all the reachable blocks */;
+  }
+
+  return State.getReachables();
 }
