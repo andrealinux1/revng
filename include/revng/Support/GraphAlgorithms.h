@@ -289,8 +289,7 @@ entryPoints(GraphType &&Graph) {
   return Result;
 }
 
-namespace revng {
-  namespace detail {
+namespace revng::detail {
 
   template<class NodeT>
   using StatusMap = llvm::DenseMap<NodeT *, bool>;
@@ -380,8 +379,7 @@ namespace revng {
     }
   };
 
-  } // namespace detail
-} // namespace revng
+} // namespace revng::detail
 
 template<class NodeT>
 llvm::SmallSet<revng::detail::EdgeDescriptor<NodeT>, 10>
