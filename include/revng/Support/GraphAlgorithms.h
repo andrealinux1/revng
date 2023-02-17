@@ -299,6 +299,7 @@ namespace revng::detail {
 
   template<class NodeT>
   class DFState : public StatusMap<NodeT> {
+  protected:
     using StatusMap = StatusMap<NodeT>;
     using EdgeDescriptor = EdgeDescriptor<NodeT>;
 
@@ -315,8 +316,8 @@ namespace revng::detail {
 
   template<class NodeT>
   class DFSBackedgeState : public DFState<NodeT> {
-    using StatusMap = StatusMap<NodeT>;
-    using EdgeDescriptor = EdgeDescriptor<NodeT>;
+    using typename DFState<NodeT>::StatusMap;
+    using typename DFState<NodeT>::EdgeDescriptor;
 
   private:
     NodeT *CurrentNode = nullptr;
@@ -345,8 +346,8 @@ namespace revng::detail {
 
   template<class NodeT>
   class DFSReachableState : public DFState<NodeT> {
-    using StatusMap = StatusMap<NodeT>;
-    using EdgeDescriptor = EdgeDescriptor<NodeT>;
+    using typename DFState<NodeT>::StatusMap;
+    using typename DFState<NodeT>::EdgeDescriptor;
 
   private:
     // Set which contains the desired targets nodes marked as reachable during
