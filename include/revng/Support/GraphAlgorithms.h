@@ -309,6 +309,19 @@ namespace revng::detail {
       return StatusMap::insert(std::make_pair(Block, true));
     }
 
+    // Return true if b is currently on the active stack of visit.
+    bool onStack(NodeT *Block) {
+      auto Iter = this->find(Block);
+      return Iter != this->end() && Iter->second;
+    }
+
+  public:
+    // Return the insertion iterator on the underlying map.
+    std::pair<typename StatusMap::iterator, bool>
+    insertInMapFalse(NodeT *Block) {
+      return StatusMap::insert(std::make_pair(Block, false));
+    }
+
   public:
     // Invoked after we have processed all children of a node during the DFS.
     void completed(NodeT *Block) { (*this)[Block] = false; }
@@ -322,25 +335,26 @@ namespace revng::detail {
   private:
     NodeT *CurrentNode = nullptr;
     llvm::SmallSet<EdgeDescriptor, 10> Backedges;
+    std::function<bool(NodeT *)> IsValid;
 
   public:
+    DFSBackedgeState(std::function<bool(NodeT *)> IsValid) : IsValid(IsValid) {}
+
     void setCurrentNode(NodeT *Node) { CurrentNode = Node; }
     llvm::SmallSet<EdgeDescriptor, 10> getBackedges() { return Backedges; }
     std::pair<typename StatusMap::iterator, bool> insert(NodeT *Block) {
 
-      // In case we are trying to insert in the `Visited` set a node that is
-      // already on the visit stack, we found a backedge.
-      if (onStack(Block)) {
-        revng_assert(CurrentNode != nullptr);
-        Backedges.insert(std::make_pair(CurrentNode, Block));
+      if (IsValid(Block)) {
+        // In case we are trying to insert in the `Visited` set a node that is
+        // already on the visit stack, we found a backedge.
+        if (DFState<NodeT>::onStack(Block)) {
+          revng_assert(CurrentNode != nullptr);
+          Backedges.insert(std::make_pair(CurrentNode, Block));
+        }
+        return DFState<NodeT>::insertInMap(Block);
+      } else {
+        return DFState<NodeT>::insertInMapFalse(Block);
       }
-      return DFState<NodeT>::insertInMap(Block);
-    }
-
-    // Return true if b is currently on the active stack of visit.
-    bool onStack(NodeT *Block) {
-      auto Iter = this->find(Block);
-      return Iter != this->end() && Iter->second;
     }
   };
 
@@ -353,12 +367,17 @@ namespace revng::detail {
     // Set which contains the desired targets nodes marked as reachable during
     // the visit.
     llvm::SmallSet<NodeT *, 10> Targets;
+    llvm::DenseMap<NodeT *, llvm::SmallSet<NodeT *, 10>> AdditionalNodes;
 
   public:
     // Insert the initial target node at the beginning of the visit.
     void insertTarget(NodeT *Block) { Targets.insert(Block); }
 
     llvm::SmallSet<NodeT *, 10> getReachables() { return Targets; }
+
+    llvm::SmallSet<NodeT *, 10> &getAdditional(NodeT *Block) {
+      return AdditionalNodes[Block];
+    }
 
     // Customize the `insert` method, in order to add the reachables nodes
     // during the DFS.
@@ -375,6 +394,17 @@ namespace revng::detail {
         }
       }
 
+      // When we encounter a loop, we add to the additional set of nodes the
+      // nodes that are onStack, for later additional post-processing.
+      if (DFState<NodeT>::onStack(Block)) {
+        llvm::SmallSet<NodeT *, 10> &AdditionalSet = AdditionalNodes[Block];
+        for (auto const &[K, V] : *this) {
+          if (V) {
+            AdditionalSet.insert(K);
+          }
+        }
+      }
+
       // Return the insertion iterator as usual.
       return DFState<NodeT>::insertInMap(Block);
     }
@@ -384,8 +414,8 @@ namespace revng::detail {
 
 template<class NodeT>
 llvm::SmallSet<revng::detail::EdgeDescriptor<NodeT>, 10>
-getBackedges(NodeT *Block) {
-  revng::detail::DFSBackedgeState<NodeT> State;
+getBackedges(NodeT *Block, std::function<bool(NodeT *)> IsValid) {
+  revng::detail::DFSBackedgeState<NodeT> State(IsValid);
 
   // Explore the graph in DFS order and mark backedges.
   for (NodeT *Block : llvm::depth_first_ext(Block, State)) {
@@ -397,17 +427,50 @@ getBackedges(NodeT *Block) {
 }
 
 template<class NodeT>
+llvm::SmallSet<revng::detail::EdgeDescriptor<NodeT>, 10>
+getBackedges(NodeT *Block) {
+  std::function<bool(NodeT *)> Lambda = [](NodeT *B) { return true; };
+  return getBackedges(Block, Lambda);
+}
+
+template<class NodeT>
 llvm::SmallSet<NodeT *, 10> findReachableBlocks(NodeT *Source, NodeT *Target) {
   revng::detail::DFSReachableState<NodeT> State;
 
   // Initialize the visited set with the target node, which is the boundary
   // that we don't want to trepass when finding reachable nodes.
   State.insertTarget(Target);
+
+  // Explore the graph in DFS order and collect the reachable blocks.
   for (NodeT *Block : llvm::depth_first_ext(Source, State)) {
     (void) Block /* Mark all the reachable blocks */;
   }
 
-  return State.getReachables();
+  auto Targets = State.getReachables();
+  // Add in a fixed point fashion the additional nodes.
+  llvm::SmallSet<NodeT *, 10> OldTargets;
+  do {
+    // At each iteration obtain a copy of the old set, so that we are able to
+    // exit from the loop as soon no change is made to the `Targets` set.
+
+    OldTargets = Targets;
+
+    // Temporary storage for the nodes to add at each iteration, to avoid
+    // invalidation on the `Targets` set.
+    llvm::SmallSet<NodeT *, 10> NodesToAdd;
+
+    for (NodeT *Block : Targets) {
+      llvm::SmallSet<NodeT *, 10> &AdditionalSet = State.getAdditional(Block);
+      NodesToAdd.insert(AdditionalSet.begin(), AdditionalSet.end());
+    }
+
+    // Add all the additional nodes found in this step.
+    Targets.insert(NodesToAdd.begin(), NodesToAdd.end());
+    NodesToAdd.clear();
+
+  } while (Targets != OldTargets);
+
+  return Targets;
 }
 
 template<class NodeT>
@@ -475,4 +538,31 @@ void simplifyRegions(llvm::SmallVector<llvm::SmallSet<NodeT, 10>, 10> &R) {
   while (Changes) {
     Changes = simplifyRegionsStep(R);
   }
+}
+
+template<class G>
+inline llvm::SmallPtrSet<G, 4>
+nodesBetween(G Source,
+             G Destination,
+             const llvm::SmallPtrSetImpl<G> *IgnoreList = nullptr) {
+  revng::detail::DFSReachableState<G> State;
+
+  // If the `IgnoreList` is not empty, populate the ext set with the nodes that
+  // it contains.
+  if (IgnoreList != nullptr) {
+    for (G *Element : *IgnoreList) {
+      State.insertInMapFalse(Element);
+    }
+  }
+
+  // Initialize the visited set with the target node, which is the boundary
+  // that we don't want to trepass when finding reachable nodes.
+  State.insertTarget(Destination);
+
+  // Explore the graph in DFS order and collect the reachable blocks.
+  for (G *Block : llvm::depth_first_ext(Source, State)) {
+    (void) Block /* Mark all the reachable blocks */;
+  }
+
+  return State.getReachables();
 }
