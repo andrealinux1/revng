@@ -420,7 +420,6 @@ getBackedges(NodeT *Block, std::function<bool(NodeT *)> IsValid) {
   // Explore the graph in DFS order and mark backedges.
   for (NodeT *Block : llvm::depth_first_ext(Block, State)) {
     State.setCurrentNode((Block));
-    (void) Block;
   }
 
   return State.getBackedges();
@@ -434,7 +433,7 @@ getBackedges(NodeT *Block) {
 }
 
 template<class NodeT>
-llvm::SmallSet<NodeT *, 10> findReachableBlocks(NodeT *Source, NodeT *Target) {
+llvm::SmallSet<NodeT *, 10> nodesBetween(NodeT *Source, NodeT *Target) {
   revng::detail::DFSReachableState<NodeT> State;
 
   // Initialize the visited set with the target node, which is the boundary
@@ -443,7 +442,6 @@ llvm::SmallSet<NodeT *, 10> findReachableBlocks(NodeT *Source, NodeT *Target) {
 
   // Explore the graph in DFS order and collect the reachable blocks.
   for (NodeT *Block : llvm::depth_first_ext(Source, State)) {
-    (void) Block /* Mark all the reachable blocks */;
   }
 
   auto Targets = State.getReachables();
@@ -561,7 +559,6 @@ nodesBetween(G Source,
 
   // Explore the graph in DFS order and collect the reachable blocks.
   for (G *Block : llvm::depth_first_ext(Source, State)) {
-    (void) Block /* Mark all the reachable blocks */;
   }
 
   return State.getReachables();

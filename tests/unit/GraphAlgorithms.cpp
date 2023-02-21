@@ -104,8 +104,7 @@ BOOST_AUTO_TEST_CASE(GetBackedgesTest) {
   revng_check(Target == LG.Entry);
 
   // Check the reachability set described by the only backedge present.
-  llvm::SmallSet<NodeType *, 10> Reachables = findReachableBlocks(Target,
-                                                                  Source);
+  llvm::SmallSet<NodeType *, 10> Reachables = nodesBetween(Target, Source);
   revng_check(Reachables.size() == 2);
   revng_check(Reachables.contains(LG.Entry));
   revng_check(Reachables.contains(LG.LoopLatch));
@@ -127,7 +126,7 @@ BOOST_AUTO_TEST_CASE(SimplifyRegionsTest) {
 
   BlockSetVect Regions;
   for (EdgeDescriptor Backedge : Backedges) {
-    BlockSet RegionNodes = findReachableBlocks(Backedge.second, Backedge.first);
+    BlockSet RegionNodes = nodesBetween(Backedge.second, Backedge.first);
     Regions.push_back(std::move(RegionNodes));
   }
 
