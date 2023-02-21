@@ -32,7 +32,7 @@ struct LoopGraph {
 };
 
 template<typename NodeType>
-static LoopGraph<NodeType> createGraph() {
+static LoopGraph<NodeType> createLGGraph() {
   LoopGraph<NodeType> LG;
   auto &Graph = LG.Graph;
 
@@ -52,17 +52,50 @@ static LoopGraph<NodeType> createGraph() {
   return LG;
 }
 
-BOOST_AUTO_TEST_CASE(GetBackedgesTest) {
+template<typename NodeType>
+struct OverLappingLoopGraph {
+  using Node = NodeType;
+  GenericGraph<Node> Graph;
+  Node *Entry;
+  Node *SecondEntry;
+  Node *Latch;
+  Node *SecondLatch;
+  Node *Exit;
+};
 
-  // Create the graph
+template<typename NodeType>
+static OverLappingLoopGraph<NodeType> createOLGGraph() {
+  OverLappingLoopGraph<NodeType> OLG;
+  auto &Graph = OLG.Graph;
+
+  // Create nodes
+  OLG.Entry = Graph.addNode(1);
+  OLG.SecondEntry = Graph.addNode(2);
+  OLG.Latch = Graph.addNode(3);
+  OLG.SecondLatch = Graph.addNode(4);
+  OLG.Exit = Graph.addNode(5);
+
+  // Create edges
+  OLG.Entry->addSuccessor(OLG.SecondEntry);
+  OLG.SecondEntry->addSuccessor(OLG.Latch);
+  OLG.Latch->addSuccessor(OLG.SecondLatch);
+  OLG.Latch->addSuccessor(OLG.Entry);
+  OLG.SecondLatch->addSuccessor(OLG.SecondEntry);
+  OLG.SecondLatch->addSuccessor(OLG.Exit);
+
+  return OLG;
+}
+
+BOOST_AUTO_TEST_CASE(GetBackedgesTest) {
+  // Create the graph.
   using NodeType = ForwardNode<MyForwardNode>;
-  auto LG = createGraph<NodeType>();
+  auto LG = createLGGraph<NodeType>();
   using EdgeDescriptor = revng::detail::EdgeDescriptor<NodeType>;
 
-  // Compute the backedges set
+  // Compute the backedges set.
   llvm::SmallSet<EdgeDescriptor, 10> Backedges = getBackedges(LG.Entry);
 
-  // Check that the only backedge present
+  // Check that the only backedge present.
   revng_check(Backedges.size() == 1);
   EdgeDescriptor Backedge = *Backedges.begin();
   NodeType *Source = Backedge.first;
@@ -77,4 +110,29 @@ BOOST_AUTO_TEST_CASE(GetBackedgesTest) {
   revng_check(Reachables.contains(LG.Entry));
   revng_check(Reachables.contains(LG.LoopLatch));
   revng_check(LG.Entry != LG.LoopLatch);
+}
+
+BOOST_AUTO_TEST_CASE(SimplifyRegionsTest) {
+  // Create the graph.
+  using NodeType = ForwardNode<MyForwardNode>;
+  auto OLG = createOLGGraph<NodeType>();
+  using EdgeDescriptor = revng::detail::EdgeDescriptor<NodeType>;
+  using EdgeSet = llvm::SmallSet<EdgeDescriptor, 10>;
+  using BlockSet = llvm::SmallSet<NodeType *, 10>;
+  using BlockSetVect = llvm::SmallVector<BlockSet, 10>;
+
+  // Compute the backedges set.
+  EdgeSet Backedges = getBackedges(OLG.Entry);
+  revng_check(Backedges.size() == 2);
+
+  BlockSetVect Regions;
+  for (EdgeDescriptor Backedge : Backedges) {
+    BlockSet RegionNodes = findReachableBlocks(Backedge.second, Backedge.first);
+    Regions.push_back(std::move(RegionNodes));
+  }
+
+  // Simplify the two regions and verify that they have been collapsed in a
+  // single one.
+  simplifyRegions(Regions);
+  revng_check(Regions.size() == 1);
 }

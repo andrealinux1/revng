@@ -409,3 +409,70 @@ llvm::SmallSet<NodeT *, 10> findReachableBlocks(NodeT *Source, NodeT *Target) {
 
   return State.getReachables();
 }
+
+template<class NodeT>
+bool intersect(llvm::SmallSet<NodeT, 10> &First,
+               llvm::SmallSet<NodeT, 10> &Second) {
+  auto FirstIt = First.begin();
+  auto FirstEnd = First.end();
+  auto SecondIt = Second.begin();
+  auto SecondEnd = Second.end();
+  while (FirstIt != FirstEnd and SecondIt != SecondEnd) {
+    if (*FirstIt < *SecondIt) {
+      ++FirstIt;
+    } else {
+      if (not(*SecondIt < *FirstIt)) {
+        return true; // If we end up here, the elements are equal, hence
+                     // intersection is not empty.
+      }
+      ++SecondIt;
+    }
+  }
+
+  // If we reach this point no element was in common.
+  return false;
+}
+
+template<class NodeT>
+bool subset(llvm::SmallSet<NodeT, 10> &Contained,
+            llvm::SmallSet<NodeT, 10> &Containing) {
+  return std::includes(Containing.begin(),
+                       Containing.end(),
+                       Contained.begin(),
+                       Contained.end());
+}
+
+template<class NodeT>
+bool equal(llvm::SmallSet<NodeT, 10> &First,
+           llvm::SmallSet<NodeT, 10> &Second) {
+  return First == Second;
+}
+
+template<class NodeT>
+bool simplifyRegionsStep(llvm::SmallVector<llvm::SmallSet<NodeT, 10>, 10> &R) {
+  for (auto RegionIt1 = R.begin(); RegionIt1 != R.end(); RegionIt1++) {
+    for (auto RegionIt2 = std::next(RegionIt1); RegionIt2 != R.end();
+         RegionIt2++) {
+      bool Intersects = intersect(*RegionIt1, *RegionIt2);
+      bool IsIncluded = subset(*RegionIt1, *RegionIt2);
+      bool IsIncludedReverse = subset(*RegionIt2, *RegionIt1);
+      bool AreEquivalent = equal(*RegionIt1, *RegionIt2);
+      if (Intersects
+          and (((!IsIncluded) and (!IsIncludedReverse)) or AreEquivalent)) {
+        (*RegionIt1).insert((*RegionIt2).begin(), (*RegionIt2).end());
+        R.erase(RegionIt2);
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+template<class NodeT>
+void simplifyRegions(llvm::SmallVector<llvm::SmallSet<NodeT, 10>, 10> &R) {
+  bool Changes = true;
+  while (Changes) {
+    Changes = simplifyRegionsStep(R);
+  }
+}
