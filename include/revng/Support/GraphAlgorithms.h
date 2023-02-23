@@ -4,6 +4,7 @@
 // This file is distributed under the MIT License. See LICENSE.md for details.
 //
 
+#include <algorithm>
 #include <set>
 #include <vector>
 
@@ -332,12 +333,13 @@ nodesBetweenImpl(GraphT Source,
     }
   }
 
+  // Assign the `Source` node.
+  State.assignSource(Source);
+
   // Initialize the visited set with the target node, which is the boundary
   // that we don't want to trepass when finding reachable nodes.
   State.insertTarget(Target);
-
-  // Assign the `Source` node.
-  State.assignSource(Source);
+  State.insertInMap(Target, false);
 
   using nbdf_iterator = llvm::df_iterator<GraphT, StateType, true, GT>;
   auto Begin = nbdf_iterator::begin(Source, State);
@@ -398,39 +400,38 @@ nodesBetweenReverse(GraphT Source,
 template<class NodeT>
 bool intersect(llvm::SmallPtrSet<NodeT, 4> &First,
                llvm::SmallPtrSet<NodeT, 4> &Second) {
-  auto FirstIt = First.begin();
-  auto FirstEnd = First.end();
-  auto SecondIt = Second.begin();
-  auto SecondEnd = Second.end();
-  while (FirstIt != FirstEnd and SecondIt != SecondEnd) {
-    if (*FirstIt < *SecondIt) {
-      ++FirstIt;
-    } else {
-      if (not(*SecondIt < *FirstIt)) {
-        return true; // If we end up here, the elements are equal, hence
-                     // intersection is not empty.
-      }
-      ++SecondIt;
-    }
-  }
 
-  // If we reach this point no element was in common.
-  return false;
+  std::set<NodeT> FirstSet;
+  std::set<NodeT> SecondSet;
+  FirstSet.insert(First.begin(), First.end());
+  SecondSet.insert(Second.begin(), Second.end());
+
+  llvm::SmallVector<NodeT, 4> Intersection;
+  std::set_intersection(FirstSet.begin(), FirstSet.end(), SecondSet.begin(), SecondSet.end(), std::back_inserter(Intersection));
+  return !Intersection.empty();
 }
 
 template<class NodeT>
 bool subset(llvm::SmallPtrSet<NodeT, 4> &Contained,
             llvm::SmallPtrSet<NodeT, 4> &Containing) {
-  return std::includes(Containing.begin(),
-                       Containing.end(),
-                       Contained.begin(),
-                       Contained.end());
+  std::set<NodeT> ContainedSet;
+  std::set<NodeT> ContainingSet;
+  ContainedSet.insert(Contained.begin(), Contained.end());
+  ContainingSet.insert(Containing.begin(), Containing.end());
+  return std::includes(ContainingSet.begin(),
+                       ContainingSet.end(),
+                       ContainedSet.begin(),
+                       ContainedSet.end());
 }
 
 template<class NodeT>
 bool equal(llvm::SmallPtrSet<NodeT, 4> &First,
            llvm::SmallPtrSet<NodeT, 4> &Second) {
-  return First == Second;
+  std::set<NodeT> FirstSet;
+  std::set<NodeT> SecondSet;
+  FirstSet.insert(First.begin(), First.end());
+  SecondSet.insert(Second.begin(), Second.end());
+  return FirstSet == SecondSet;
 }
 
 template<class NodeT>
