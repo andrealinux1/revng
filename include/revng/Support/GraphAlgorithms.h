@@ -407,7 +407,11 @@ bool intersect(llvm::SmallPtrSet<NodeT, 4> &First,
   SecondSet.insert(Second.begin(), Second.end());
 
   llvm::SmallVector<NodeT, 4> Intersection;
-  std::set_intersection(FirstSet.begin(), FirstSet.end(), SecondSet.begin(), SecondSet.end(), std::back_inserter(Intersection));
+  std::set_intersection(FirstSet.begin(),
+                        FirstSet.end(),
+                        SecondSet.begin(),
+                        SecondSet.end(),
+                        std::back_inserter(Intersection));
   return !Intersection.empty();
 }
 
