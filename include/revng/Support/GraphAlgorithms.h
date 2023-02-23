@@ -303,23 +303,17 @@ namespace revng::detail {
     using StatusMap = StatusMap<NodeT>;
     using EdgeDescriptor = EdgeDescriptor<NodeT>;
 
-  protected:
+  public:
     // Return the insertion iterator on the underlying map.
-    std::pair<typename StatusMap::iterator, bool> insertInMap(NodeT Block) {
-      return StatusMap::insert(std::make_pair(Block, true));
+    std::pair<typename StatusMap::iterator, bool>
+    insertInMap(NodeT Block, bool OnStack) {
+      return StatusMap::insert(std::make_pair(Block, OnStack));
     }
 
     // Return true if b is currently on the active stack of visit.
     bool onStack(NodeT Block) {
       auto Iter = this->find(Block);
       return Iter != this->end() && Iter->second;
-    }
-
-  public:
-    // Return the insertion iterator on the underlying map.
-    std::pair<typename StatusMap::iterator, bool>
-    insertInMapFalse(NodeT Block) {
-      return StatusMap::insert(std::make_pair(Block, false));
     }
 
   public:
@@ -341,19 +335,16 @@ namespace revng::detail {
     DFSBackedgeState(std::function<bool(NodeT)> IsValid) : IsValid(IsValid) {}
 
     void setCurrentNode(NodeT Node) { CurrentNode = Node; }
+    void insertBackedge(NodeT Source, NodeT Target) {
+      Backedges.insert(std::make_pair(Source, Target));
+    }
     llvm::SmallSet<EdgeDescriptor, 4> getBackedges() { return Backedges; }
     std::pair<typename StatusMap::iterator, bool> insert(NodeT Block) {
 
       if (IsValid(Block)) {
-        // In case we are trying to insert in the `Visited` set a node that is
-        // already on the visit stack, we found a backedge.
-        if (DFState<NodeT>::onStack(Block)) {
-          revng_assert(CurrentNode != nullptr);
-          Backedges.insert(std::make_pair(CurrentNode, Block));
-        }
-        return DFState<NodeT>::insertInMap(Block);
+        return DFState<NodeT>::insertInMap(Block, true);
       } else {
-        return DFState<NodeT>::insertInMapFalse(Block);
+        return DFState<NodeT>::insertInMap(Block, false);
       }
     }
   };
@@ -406,7 +397,7 @@ namespace revng::detail {
       }
 
       // Return the insertion iterator as usual.
-      return DFState<NodeT>::insertInMap(Block);
+      return DFState<NodeT>::insertInMap(Block, true);
     }
   };
 
@@ -432,7 +423,12 @@ getBackedges(GraphT Block, std::function<bool(typename GT::NodeRef)> IsValid) {
   auto End = bdf_iterator::end(Block, State);
 
   for (NodeRef Block : llvm::make_range(Begin, End)) {
-    State.setCurrentNode((Block));
+    for (NodeRef Succ :
+         llvm::make_range(GT::child_begin(Block), GT::child_end(Block))) {
+      if (State.onStack(Succ)) {
+        State.insertBackedge(Block, Succ);
+      }
+    }
   }
 
   return State.getBackedges();
@@ -459,7 +455,7 @@ nodesBetweenImpl(GraphT Source,
   // it contains.
   if (IgnoreList != nullptr) {
     for (GraphT Element : *IgnoreList) {
-      State.insertInMapFalse(Element);
+      State.insertInMap(Element, false);
     }
   }
 
@@ -530,7 +526,6 @@ nodesBetweenReverse(GraphT Source,
                                                                 IgnoreList);
 }
 
-
 template<class NodeT>
 bool intersect(llvm::SmallPtrSet<NodeT, 4> &First,
                llvm::SmallPtrSet<NodeT, 4> &Second) {
@@ -570,9 +565,9 @@ bool equal(llvm::SmallPtrSet<NodeT, 4> &First,
 }
 
 template<class NodeT>
-bool simplifyRegionsStep(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4> &Rs) {
-  for (auto RegionIt1 = Rs.begin(); RegionIt1 != Rs.end(); RegionIt1++) {
-    for (auto RegionIt2 = std::next(RegionIt1); RegionIt2 != Rs.end();
+bool simplifyRegionsStep(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4> &R) {
+  for (auto RegionIt1 = R.begin(); RegionIt1 != R.end(); RegionIt1++) {
+    for (auto RegionIt2 = std::next(RegionIt1); RegionIt2 != R.end();
          RegionIt2++) {
       bool Intersects = intersect(*RegionIt1, *RegionIt2);
       bool IsIncluded = subset(*RegionIt1, *RegionIt2);
@@ -581,7 +576,7 @@ bool simplifyRegionsStep(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4> &Rs) 
       if (Intersects
           and (((!IsIncluded) and (!IsIncludedReverse)) or AreEquivalent)) {
         (*RegionIt1).insert((*RegionIt2).begin(), (*RegionIt2).end());
-        Rs.erase(RegionIt2);
+        R.erase(RegionIt2);
         return true;
       }
     }
@@ -604,7 +599,7 @@ void sortRegions(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4> &Rs) {
             Rs.end(),
             [](llvm::SmallPtrSet<NodeT, 4> &First,
                llvm::SmallPtrSet<NodeT, 4> &Second) {
-                return First.size() < Second.size();
+              return First.size() < Second.size();
             });
 }
 
@@ -618,9 +613,11 @@ revng::detail::ParentMap
 computeParent(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4> &Rs) {
   revng::detail::ParentMap PM;
   for (auto RegionIt1 = Rs.begin(); RegionIt1 != Rs.end(); RegionIt1++) {
-    for (auto RegionIt2 = std::next(RegionIt1); RegionIt2 != Rs.end(); RegionIt2++) {
+    for (auto RegionIt2 = std::next(RegionIt1); RegionIt2 != Rs.end();
+         RegionIt2++) {
       if (subset(*RegionIt1, *RegionIt2)) {
-        PM[std::distance(Rs.begin(), RegionIt1)] = std::distance(Rs.begin(), RegionIt2);
+        PM[std::distance(Rs.begin(), RegionIt1)] = std::distance(Rs.begin(),
+                                                                 RegionIt2);
         break;
       }
     }
@@ -638,7 +635,7 @@ obtainPartialOrder(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4> &Rs,
 
   while (Rs.size() != Processed.size()) {
     for (auto RegionIt1 = Rs.begin(); RegionIt1 != Rs.end(); RegionIt1++) {
-      if (Processed.count(std::distance(Rs.begin(), RegionIt1)) == 0){
+      if (Processed.count(std::distance(Rs.begin(), RegionIt1)) == 0) {
         bool FoundParent = false;
         for (auto RegionIt2 = std::next(RegionIt1); RegionIt2 != Rs.end();
              RegionIt2++) {
