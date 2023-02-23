@@ -175,9 +175,9 @@ BOOST_AUTO_TEST_CASE(SimplifyRegionsTest) {
 template<class NodeType>
 void printEdge(revng::detail::EdgeDescriptor<NodeType *> &Backedge) {
   llvm::dbgs() << "Backedge: ";
-  llvm::dbgs() <<  Backedge.first->getIndex();
+  llvm::dbgs() << Backedge.first->getIndex();
   llvm::dbgs() << " -> ";
-  llvm::dbgs() <<  Backedge.second->getIndex();
+  llvm::dbgs() << Backedge.second->getIndex();
   llvm::dbgs() << "\n";
 }
 
@@ -189,13 +189,13 @@ void printRegion(llvm::SmallPtrSet<NodeType *, 4> &Region) {
 }
 
 template<class NodeType>
-void printRegions(llvm::SmallVector<llvm::SmallPtrSet<NodeType *, 4>, 4> &Regions) {
-  //using EdgeDescriptor = revng::detail::EdgeDescriptor<NodeType *>;
-  //using EdgeSet = llvm::SmallSet<EdgeDescriptor, 4>;
+void printRegions(llvm::SmallVector<llvm::SmallPtrSet<NodeType *, 4>, 4> &Rs) {
+  // using EdgeDescriptor = revng::detail::EdgeDescriptor<NodeType *>;
+  // using EdgeSet = llvm::SmallSet<EdgeDescriptor, 4>;
   using BlockSet = llvm::SmallPtrSet<NodeType *, 4>;
-  //using BlockSetVect = llvm::SmallVector<BlockSet, 4>;
+  // using BlockSetVect = llvm::SmallVector<BlockSet, 4>;
   size_t RegionIndex = 0;
-  for (BlockSet &Region : Regions) {
+  for (BlockSet &Region : Rs) {
     llvm::dbgs() << "Region idx: " << RegionIndex << " composed by nodes: \n";
     printRegion(Region);
   }

@@ -359,10 +359,15 @@ namespace revng::detail {
     // the visit.
     llvm::SmallPtrSet<NodeT, 4> Targets;
     llvm::DenseMap<NodeT, llvm::SmallPtrSet<NodeT, 4>> AdditionalNodes;
+    NodeT Source = nullptr;
+    bool FirstInvocation = true;
 
   public:
     // Insert the initial target node at the beginning of the visit.
     void insertTarget(NodeT Block) { Targets.insert(Block); }
+
+    // Assign the `Source` node.
+    void assignSource(NodeT Block) { Source = Block; }
 
     llvm::SmallPtrSet<NodeT, 4> getReachables() { return Targets; }
 
@@ -373,6 +378,15 @@ namespace revng::detail {
     // Customize the `insert` method, in order to add the reachables nodes
     // during the DFS.
     std::pair<typename StatusMap::iterator, bool> insert(NodeT Block) {
+
+      // We need to insert the `Source` node, which is the first element on
+      // which the `insert` method is called, only once, and later on skip it,
+      // otherwise we may loop back from the `Source` and add additional nodes.
+      revng_assert(Source != nullptr);
+      if (!FirstInvocation and Block == Source) {
+        return DFState<NodeT>::insertInMap(Block, false);
+      }
+      FirstInvocation = false;
 
       // Check that, if we are trying to insert a block which is the `Targets`
       // set, we add all the nodes on the current visiting stack in the
@@ -462,6 +476,9 @@ nodesBetweenImpl(GraphT Source,
   // Initialize the visited set with the target node, which is the boundary
   // that we don't want to trepass when finding reachable nodes.
   State.insertTarget(Target);
+
+  // Assign the `Source` node.
+  State.assignSource(Source);
 
   /*
   // Explore the graph in DFS order and collect the reachable blocks.
