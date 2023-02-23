@@ -17,142 +17,6 @@
 
 #include "revng/Support/Debug.h"
 
-template<typename GT, typename NodeRef = typename GT::NodeRef>
-inline llvm::SmallPtrSet<NodeRef, 4>
-nodesBetweenImpl(NodeRef Source,
-                 NodeRef Destination,
-                 const llvm::SmallPtrSetImpl<NodeRef> *IgnoreList) {
-
-  using Iterator = typename GT::ChildIteratorType;
-  using NodeSet = llvm::SmallPtrSet<NodeRef, 4>;
-
-  auto HasSuccessors = [](const NodeRef Node) {
-    return GT::child_begin(Node) != GT::child_end(Node);
-  };
-
-  // Ensure Source has at least one successor
-  if (not HasSuccessors(Source)) {
-    if (Source == Destination)
-      return { Source };
-    else
-      return {};
-  }
-
-  NodeSet Selected = { Destination };
-  NodeSet VisitedNodes;
-
-  struct StackEntry {
-    StackEntry(NodeRef Node) :
-      Node(Node),
-      Set({ Node }),
-      NextSuccessorIt(GT::child_begin(Node)),
-      EndSuccessorIt(GT::child_end(Node)) {}
-
-    NodeRef Node;
-    NodeSet Set;
-    Iterator NextSuccessorIt;
-    Iterator EndSuccessorIt;
-  };
-  std::vector<StackEntry> Stack;
-
-  Stack.emplace_back(Source);
-
-  while (not Stack.empty()) {
-    StackEntry *Entry = &Stack.back();
-
-    NodeRef CurrentSuccessor = *Entry->NextSuccessorIt;
-
-    bool Visited = (VisitedNodes.count(CurrentSuccessor) != 0);
-    VisitedNodes.insert(CurrentSuccessor);
-
-    if (Selected.count(CurrentSuccessor) != 0) {
-
-      // We reached a selected node, select all the nodes on the stack
-      for (const StackEntry &E : Stack) {
-        Selected.insert(E.Set.begin(), E.Set.end());
-      }
-
-    } else if (Visited) {
-      // We already visited this node, do not proceed in this direction
-
-      auto End = Stack.end();
-      auto IsCurrent = [CurrentSuccessor](const StackEntry &E) {
-        return E.Set.count(CurrentSuccessor) != 0;
-      };
-      auto It = std::find_if(Stack.begin(), End, IsCurrent);
-      bool IsAlreadyOnStack = It != End;
-
-      if (IsAlreadyOnStack) {
-        // It's already on the stack, insert all those on stack until the top
-        StackEntry &Target = *It;
-        Target.Set.insert(CurrentSuccessor);
-        ++It;
-        for (const StackEntry &E : llvm::make_range(It, End)) {
-          Target.Set.insert(E.Set.begin(), E.Set.end());
-        }
-      }
-
-    } else if (IgnoreList != nullptr
-               and IgnoreList->count(CurrentSuccessor) != 0) {
-      // Ignore
-    } else {
-
-      // We never visited this node, proceed to its successors, if any
-      if (HasSuccessors(CurrentSuccessor)) {
-        revng_assert(CurrentSuccessor != nullptr);
-        Stack.emplace_back(CurrentSuccessor);
-      }
-
-      continue;
-    }
-
-    bool TryNext = false;
-    do {
-      // Move to the next successor
-      ++Entry->NextSuccessorIt;
-
-      // Are we done with this entry?
-      TryNext = (Entry->NextSuccessorIt == Entry->EndSuccessorIt);
-
-      if (TryNext) {
-        // Pop from the stack
-        Stack.pop_back();
-
-        // If there's another element process it
-        if (Stack.size() == 0) {
-          TryNext = false;
-        } else {
-          Entry = &Stack.back();
-        }
-      }
-
-    } while (TryNext);
-  }
-
-  return Selected;
-}
-
-template<class G>
-inline llvm::SmallPtrSet<G, 4>
-nodesBetween(G Source,
-             G Destination,
-             const llvm::SmallPtrSetImpl<G> *IgnoreList = nullptr) {
-  return nodesBetweenImpl<llvm::GraphTraits<G>>(Source,
-                                                Destination,
-                                                IgnoreList);
-}
-
-template<class G>
-inline llvm::SmallPtrSet<G, 4>
-nodesBetweenReverse(G Source,
-                    G Destination,
-                    const llvm::SmallPtrSetImpl<G> *IgnoreList = nullptr) {
-  using namespace llvm;
-  return nodesBetweenImpl<GraphTraits<Inverse<G>>>(Source,
-                                                   Destination,
-                                                   IgnoreList);
-}
-
 template<typename T>
 struct scc_iterator_traits {
   using iterator = llvm::scc_iterator<T, llvm::GraphTraits<T>>;
@@ -341,6 +205,8 @@ namespace revng::detail {
     llvm::SmallSet<EdgeDescriptor, 4> getBackedges() { return Backedges; }
     std::pair<typename StatusMap::iterator, bool> insert(NodeT Block) {
 
+      // If we are trying to insert an invalid block, add it as not on the stack
+      // so it does not influence the visit.
       if (IsValid(Block)) {
         return DFState<NodeT>::insertInMap(Block, true);
       } else {
@@ -424,13 +290,6 @@ getBackedges(GraphT Block, std::function<bool(typename GT::NodeRef)> IsValid) {
   using StateType = typename revng::detail::DFSBackedgeState<NodeRef>;
   StateType State(IsValid);
 
-  /*
-  // Explore the graph in DFS order and mark backedges.
-  for (NodeT *Block : llvm::depth_first_ext(Block, State)) {
-    State.setCurrentNode((Block));
-  }
-  */
-
   // Declare manually a custom `df_iterator`
   using bdf_iterator = llvm::df_iterator<GraphT, StateType, true, GT>;
   auto Begin = bdf_iterator::begin(Block, State);
@@ -479,13 +338,6 @@ nodesBetweenImpl(GraphT Source,
 
   // Assign the `Source` node.
   State.assignSource(Source);
-
-  /*
-  // Explore the graph in DFS order and collect the reachable blocks.
-  for (NodeT *Block : llvm::depth_first_ext(Source, State)) {
-    (void) Block;
-  }
-  */
 
   using nbdf_iterator = llvm::df_iterator<GraphT, StateType, true, GT>;
   auto Begin = nbdf_iterator::begin(Source, State);
