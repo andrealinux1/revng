@@ -8,6 +8,7 @@
 #include <set>
 #include <vector>
 
+#include "llvm/ADT/BreadthFirstIterator.h"
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/GraphTraits.h"
 #include "llvm/ADT/PostOrderIterator.h"
@@ -489,58 +490,360 @@ void sortRegions(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4> &Rs) {
 namespace revng::detail {
 using ParentMap = llvm::DenseMap<std::ptrdiff_t, std::ptrdiff_t>;
 
-} // namespace revng::detail
-
+// TODO: this data structure will be responsible of handling the child/parent
+//       relationship of identified regions. We now implemented this with
+//       keeping indexes on the underlying vector around, but in future we may
+//       want to move the ownership inside and expose `GraphTraits`.
 template<class NodeT>
-revng::detail::ParentMap
-computeParent(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4> &Rs) {
-  revng::detail::ParentMap PM;
-  for (auto RegionIt1 = Rs.begin(); RegionIt1 != Rs.end(); RegionIt1++) {
-    for (auto RegionIt2 = std::next(RegionIt1); RegionIt2 != Rs.end();
-         RegionIt2++) {
-      if (subset(*RegionIt1, *RegionIt2)) {
-        PM[std::distance(Rs.begin(), RegionIt1)] = std::distance(Rs.begin(),
-                                                                 RegionIt2);
-        break;
-      }
-    }
-  }
+class ParentTree {
+  using ParentMap = llvm::DenseMap<std::ptrdiff_t, std::ptrdiff_t>;
+  using RegionSet = llvm::SmallPtrSet<NodeT, 4>;
 
-  return PM;
-}
+  using links_container = llvm::SmallVector<RegionSet>;
+  using links_iterator = typename links_container::iterator;
+  using links_const_iterator = typename links_container::const_iterator;
+  using links_range = llvm::iterator_range<links_iterator>;
+  using links_const_range = llvm::iterator_range<links_const_iterator>;
 
-template<class NodeT>
-llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4>
-obtainPartialOrder(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4> &Rs,
-                   revng::detail::ParentMap &PM) {
-  llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4> OrderedRegions;
-  llvm::SmallPtrSet<size_t, 4> Processed;
+private:
+  ParentMap Map;
+  links_container Rs;
+  llvm::DenseMap<std::ptrdiff_t, bool> IsRootRegionMap;
+  llvm::DenseMap<std::ptrdiff_t, NodeT> EntryMap;
 
-  while (Rs.size() != Processed.size()) {
+  // TODO: this field is not used, implement the check that any query to the
+  // data structure find it in a ready state.
+  bool ReadyState = false;
+
+private:
+  RegionSet &getRegionFromIndex(std::ptrdiff_t Index) { return Rs[Index]; }
+
+  void computeParents() {
     for (auto RegionIt1 = Rs.begin(); RegionIt1 != Rs.end(); RegionIt1++) {
-      if (Processed.count(std::distance(Rs.begin(), RegionIt1)) == 0) {
-        bool FoundParent = false;
-        for (auto RegionIt2 = std::next(RegionIt1); RegionIt2 != Rs.end();
-             RegionIt2++) {
-          if (Processed.count(std::distance(Rs.begin(), RegionIt1)) == 0) {
-            auto PMIt = PM.find(std::distance(Rs.begin(), RegionIt1));
-            if (PMIt != PM.end()
-                && PMIt->second == std::distance(Rs.begin(), RegionIt1)) {
-              FoundParent = true;
-              break;
-            }
-          }
-        }
-
-        if (FoundParent == false) {
-          OrderedRegions.push_back(*RegionIt1);
-          Processed.insert(std::distance(Rs.begin(), RegionIt1));
+      for (auto RegionIt2 = std::next(RegionIt1); RegionIt2 != Rs.end();
+           RegionIt2++) {
+        if (subset(*RegionIt1, *RegionIt2)) {
+          Map[getRegionIndex(*RegionIt1)] = getRegionIndex(*RegionIt2);
           break;
         }
       }
     }
   }
 
-  std::reverse(OrderedRegions.begin(), OrderedRegions.end());
-  return OrderedRegions;
+public:
+  ParentTree() = default;
+
+  void clear() {
+    Map.clear();
+    Rs.clear();
+    IsRootRegionMap.clear();
+    EntryMap.clear();
+    ReadyState = false;
+  }
+
+  links_container &getRegions() { return Rs; }
+
+  std::ptrdiff_t getRegionIndex(RegionSet &Region) {
+    for (auto RegionIt = Rs.begin(); RegionIt != Rs.end(); RegionIt++) {
+      if (*RegionIt == Region) {
+        return std::distance(Rs.begin(), RegionIt);
+      }
+    }
+
+    // TODO: We may want to soft fail in this situation, if we allow to query
+    //       the data structure with no assurance that the intended region is
+    //       present.
+    revng_assert(false);
+  }
+
+  // TODO: we need this method because we cannot have `std::optional` with
+  //       references.
+  bool hasParent(RegionSet &Child) {
+    std::ptrdiff_t ChildIndex = getRegionIndex(Child);
+    auto MapIt = Map.find(ChildIndex);
+    return MapIt != Map.end();
+  }
+
+  RegionSet &getParent(RegionSet &Child) {
+    std::ptrdiff_t ChildIndex = getRegionIndex(Child);
+    auto MapIt = Map.find(ChildIndex);
+    revng_assert(MapIt != Map.end());
+    std::ptrdiff_t ParentIndex = MapIt->second;
+    RegionSet &Parent = getRegionFromIndex(ParentIndex);
+    return Parent;
+  }
+
+  void insertRegion(RegionSet &Region) { Rs.emplace_back(std::move(Region)); }
+
+  void order() {
+    computeParents();
+    computePartialOrder();
+    computeParents();
+  }
+
+  links_iterator begin() { return Rs.begin(); }
+  links_const_iterator begin() const { return Rs.begin(); }
+  links_iterator end() { return Rs.end(); }
+  links_const_iterator end() const { return Rs.end(); }
+  links_range regions() { return llvm::make_range(begin(), end()); }
+  links_const_range regions() const { return llvm::make_range(begin(), end()); }
+
+  void computePartialOrder() {
+    links_container OrderedRegions;
+    llvm::SmallPtrSet<size_t, 4> Processed;
+
+    while (Rs.size() != Processed.size()) {
+      for (auto RegionIt1 = begin(); RegionIt1 != end(); RegionIt1++) {
+        if (Processed.count(getRegionIndex(*RegionIt1)) == 0) {
+          bool FoundParent = false;
+          for (auto RegionIt2 = std::next(RegionIt1); RegionIt2 != Rs.end();
+               RegionIt2++) {
+            if (Processed.count(getRegionIndex(*RegionIt2)) == 0) {
+              if (getParent(*RegionIt1) == *RegionIt2) {
+                FoundParent = true;
+                break;
+              }
+            }
+          }
+
+          if (FoundParent == false) {
+            OrderedRegions.push_back(*RegionIt1);
+            Processed.insert(getRegionIndex(*RegionIt1));
+            break;
+          }
+        }
+      }
+    }
+
+    // Swap the region vector with the ordered one.
+    std::reverse(OrderedRegions.begin(), OrderedRegions.end());
+    Rs.swap(OrderedRegions);
+  }
+
+  void setRegionRoot(RegionSet &Region, bool Value) {
+    std::ptrdiff_t RegionIndex = getRegionIndex(Region);
+    IsRootRegionMap[RegionIndex] = Value;
+  }
+
+  bool isRegionRoot(RegionSet &Region) {
+    std::ptrdiff_t RegionIndex = getRegionIndex(Region);
+    auto MapIt = IsRootRegionMap.find(RegionIndex);
+    revng_assert(MapIt != IsRootRegionMap.end());
+    return MapIt->second;
+  }
+
+  void setRegionEntry(RegionSet &Region, NodeT Entry) {
+    std::ptrdiff_t RegionIndex = getRegionIndex(Region);
+    EntryMap[RegionIndex] = Entry;
+  }
+
+  NodeT getRegionEntry(RegionSet &Region) {
+    std::ptrdiff_t RegionIndex = getRegionIndex(Region);
+    auto MapIt = EntryMap.find(RegionIndex);
+    revng_assert(MapIt != EntryMap.end());
+    return MapIt->second;
+  }
+};
+
+} // namespace revng::detail
+
+template<class GraphT,
+         class GT = llvm::GraphTraits<GraphT>,
+         typename NodeRef = typename GT::NodeRef>
+llvm::DenseMap<NodeRef, size_t> computeDistanceFromEntry(GraphT Source) {
+  llvm::DenseMap<NodeRef, size_t> ShortestPathFromEntry;
+
+  using SetType = llvm::bf_iterator_default_set<NodeRef>;
+  using bf_iterator = llvm::bf_iterator<GraphT, SetType, GT>;
+  auto BFSIt = bf_iterator::begin(Source);
+  auto BFSEnd = bf_iterator::end(Source);
+
+  for (; BFSIt != BFSEnd; ++BFSIt) {
+    NodeRef Block = *BFSIt;
+    size_t Depth = BFSIt.getLevel();
+
+    // Obtain the insertion iterator for the `Depth` block element.
+    auto ShortestIt = ShortestPathFromEntry.insert({ Block, Depth });
+
+    // If we already had in the map an entry for the current block, we need to
+    // revng_assert that the previously found value for the `Depth` is less or
+    // equal of the `Depth` we are inserting.
+    if (ShortestIt.second == false) {
+      revng_assert(ShortestIt.first->second <= Depth);
+    }
+  }
+
+  return ShortestPathFromEntry;
+}
+
+template<class NodeT>
+bool setContains(llvm::SmallPtrSetImpl<NodeT> &Set, NodeT &Element) {
+  return Set.contains(Element);
+}
+
+template<class GraphT,
+         class GT = llvm::GraphTraits<llvm::Inverse<GraphT>>,
+         typename NodeRef = typename GT::NodeRef>
+llvm::DenseMap<NodeRef, size_t>
+getEntryCandidates(llvm::SmallPtrSetImpl<NodeRef> &Region) {
+
+  // `DenseMap` that will contain all the candidate entries of a region, with
+  // the associated incoming edges degree.
+  llvm::DenseMap<NodeRef, size_t> Result;
+
+  // We can iterate over all the predecessors of a block, if we find a pred not
+  // in the current set, we increment the counter of the entry edges.
+  for (NodeRef Block : Region) {
+    for (NodeRef Predecessor :
+         llvm::make_range(GT::child_begin(Block), GT::child_end(Block))) {
+      if (not setContains(Region, Predecessor)) {
+        Result[Block]++;
+      }
+    }
+  }
+
+  return Result;
+}
+
+template<class NodeT>
+size_t mapAt(llvm::DenseMap<NodeT, size_t> &Map, NodeT Element) {
+  auto MapIt = Map.find(Element);
+  revng_assert(MapIt != Map.end());
+  return MapIt->second;
+}
+
+template<class NodeT>
+NodeT electEntry(llvm::DenseMap<NodeT, size_t> &EntryCandidates,
+                 llvm::DenseMap<NodeT, size_t> &ShortestPathFromEntry,
+                 llvm::SmallVectorImpl<NodeT> &RPOT) {
+  // Elect the Entry as the the candidate entry with the largest number of
+  // incoming edges from outside the region.
+  // If there's a tie, i.e. there are 2 or more candidate entries with the
+  // same number of incoming edges from an outer region, we select the entry
+  // with the minimal shortest path from entry.
+  // It it's still a tie, i.e. there are 2 or more candidate entries with the
+  // same number of incoming edges from an outer region and the same minimal
+  // shortest path from entry, then we disambiguate by picking the entry that
+  // comes first in RPOT.
+  NodeT Entry = Entry = EntryCandidates.begin()->first;
+  {
+    size_t MaxNEntries = EntryCandidates.begin()->second;
+    auto ShortestPathIt = ShortestPathFromEntry.find(Entry);
+    revng_assert(ShortestPathIt != ShortestPathFromEntry.end());
+    size_t ShortestPath = mapAt(ShortestPathFromEntry, Entry);
+    auto EntriesEnd = EntryCandidates.end();
+    for (NodeT Block : RPOT) {
+      auto EntriesIt = EntryCandidates.find(Block);
+      if (EntriesIt != EntriesEnd) {
+        const auto &[EntryCandidate, NumIncoming] = *EntriesIt;
+        if (NumIncoming > MaxNEntries) {
+          Entry = EntryCandidate;
+          ShortestPath = mapAt(ShortestPathFromEntry, EntryCandidate);
+        } else if (NumIncoming == MaxNEntries) {
+          size_t SP = mapAt(ShortestPathFromEntry, EntryCandidate);
+          if (SP < ShortestPath) {
+            Entry = EntryCandidate;
+            ShortestPath = SP;
+          }
+        }
+      }
+    }
+  }
+  revng_assert(Entry != nullptr);
+  return Entry;
+}
+
+template<class GraphT,
+         class GT = llvm::GraphTraits<llvm::Inverse<GraphT>>,
+         typename NodeRef = typename GT::NodeRef>
+llvm::SmallVector<std::pair<NodeRef, NodeRef>>
+getOutlinedEntries(llvm::DenseMap<NodeRef, size_t> &EntryCandidates,
+                   llvm::SmallPtrSetImpl<NodeRef> &Region,
+                   NodeRef Entry) {
+  llvm::SmallVector<std::pair<NodeRef, NodeRef>> LateEntryPairs;
+  for (const auto &[Other, NumIncoming] : EntryCandidates) {
+    if (Other != Entry) {
+      llvm::SmallVector<NodeRef> OutsidePredecessor;
+      for (NodeRef Predecessor :
+           llvm::make_range(GT::child_begin(Other), GT::child_end(Other))) {
+        if (not setContains(Region, Predecessor)) {
+          OutsidePredecessor.push_back(Predecessor);
+          LateEntryPairs.push_back({ Predecessor, Other });
+        }
+      }
+      revng_assert(OutsidePredecessor.size() == NumIncoming);
+    }
+  }
+
+  return LateEntryPairs;
+}
+
+template<class GraphT,
+         class GT = llvm::GraphTraits<GraphT>,
+         typename NodeRef = typename GT::NodeRef>
+llvm::SmallVector<std::pair<NodeRef, NodeRef>>
+getExitNodePairs(llvm::SmallPtrSetImpl<NodeRef> &Region) {
+
+  // Vector that contains the pairs of exit/successor node pairs.
+  llvm::SmallVector<std::pair<NodeRef, NodeRef>> ExitSuccessorPairs;
+
+  // We iterate over all the successors of a block, if we find a successor not
+  // in the current set, we add the pairs of node to the set.
+  for (NodeRef Block : Region) {
+    for (NodeRef Successor :
+         llvm::make_range(GT::child_begin(Block), GT::child_end(Block))) {
+      if (not setContains(Region, Successor)) {
+        ExitSuccessorPairs.push_back({ Block, Successor });
+      }
+    }
+  }
+
+  return ExitSuccessorPairs;
+}
+
+template<class GraphT,
+         class GT = llvm::GraphTraits<llvm::Inverse<GraphT>>,
+         typename NodeRef = typename GT::NodeRef>
+llvm::SmallVector<std::pair<NodeRef, NodeRef>>
+getPredecessorNodePairs(NodeRef Node) {
+  llvm::SmallVector<std::pair<NodeRef, NodeRef>> PredecessorNodePairs;
+  for (NodeRef Predecessor :
+       llvm::make_range(GT::child_begin(Node), GT::child_end(Node))) {
+    PredecessorNodePairs.push_back({ Predecessor, Node });
+  }
+
+  return PredecessorNodePairs;
+}
+
+template<class GraphT,
+         class GT = llvm::GraphTraits<llvm::Inverse<GraphT>>,
+         typename NodeRef = typename GT::NodeRef>
+llvm::SmallVector<std::pair<NodeRef, NodeRef>>
+getLoopPredecessorNodePairs(NodeRef Node,
+                            llvm::SmallPtrSetImpl<NodeRef> &Region) {
+  llvm::SmallVector<std::pair<NodeRef, NodeRef>> LoopPredecessorNodePairs;
+  for (NodeRef Predecessor :
+       llvm::make_range(GT::child_begin(Node), GT::child_end(Node))) {
+    if (not setContains(Region, Predecessor)) {
+      LoopPredecessorNodePairs.push_back({ Predecessor, Node });
+    }
+  }
+
+  return LoopPredecessorNodePairs;
+}
+
+template<class GraphT,
+         class GT = llvm::GraphTraits<llvm::Inverse<GraphT>>,
+         typename NodeRef = typename GT::NodeRef>
+llvm::SmallVector<std::pair<NodeRef, NodeRef>>
+getContinueNodePairs(NodeRef Entry, llvm::SmallPtrSetImpl<NodeRef> &Region) {
+  llvm::SmallVector<std::pair<NodeRef, NodeRef>> ContinueNodePairs;
+  for (NodeRef Predecessor :
+       llvm::make_range(GT::child_begin(Entry), GT::child_end(Entry))) {
+    if (setContains(Region, Predecessor)) {
+      ContinueNodePairs.push_back({ Predecessor, Entry });
+    }
+  }
+
+  return ContinueNodePairs;
 }
