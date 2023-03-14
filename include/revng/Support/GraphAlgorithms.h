@@ -195,10 +195,11 @@ namespace revng::detail {
   private:
     NodeT CurrentNode = nullptr;
     llvm::SmallSet<EdgeDescriptor, 4> Backedges;
-    std::function<bool(NodeT)> IsValid;
+    const std::function<bool(const NodeT)> &IsValid;
 
   public:
-    DFSBackedgeState(std::function<bool(NodeT)> IsValid) : IsValid(IsValid) {}
+    DFSBackedgeState(const std::function<bool(const NodeT)> &IsValid) :
+      IsValid(IsValid) {}
 
     void setCurrentNode(NodeT Node) { CurrentNode = Node; }
     void insertBackedge(NodeT Source, NodeT Target) {
@@ -300,7 +301,8 @@ namespace revng::detail {
 
 template<class GraphT, class GT = llvm::GraphTraits<GraphT>>
 llvm::SmallSet<revng::detail::EdgeDescriptor<typename GT::NodeRef>, 4>
-getBackedges(GraphT Block, std::function<bool(typename GT::NodeRef)> IsValid) {
+getBackedges(GraphT Block,
+             const std::function<bool(const typename GT::NodeRef)> &IsValid) {
   using NodeRef = typename GT::NodeRef;
   using StateType = typename revng::detail::DFSBackedgeState<NodeRef>;
   StateType State(IsValid);
@@ -325,9 +327,7 @@ getBackedges(GraphT Block, std::function<bool(typename GT::NodeRef)> IsValid) {
 template<class GraphT, class GT = llvm::GraphTraits<GraphT>>
 llvm::SmallSet<revng::detail::EdgeDescriptor<typename GT::NodeRef>, 4>
 getBackedges(GraphT Block) {
-  std::function<bool(typename GT::NodeRef)> Lambda =
-    [](typename GT::NodeRef B) { return true; };
-  return getBackedges(Block, Lambda);
+  return getBackedges(Block, [](const typename GT::NodeRef B) { return true; });
 }
 
 template<class GraphT, class GT = llvm::GraphTraits<GraphT>>
