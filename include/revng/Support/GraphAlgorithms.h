@@ -212,7 +212,12 @@ namespace revng::detail {
       if (IsValid(Block)) {
         return DFState<NodeT>::insertInMap(Block, true);
       } else {
-        return DFState<NodeT>::insertInMap(Block, false);
+
+        // We want to completely ignore the fact that we inserted an element in
+        // the `DFState`, otherwise we will explore it anyway, therefore we
+        // manually return `false`, so the node is not explored at all.
+        auto InsertIt = DFState<NodeT>::insertInMap(Block, false);
+        return std::make_pair(InsertIt.first, false);
       }
     }
   };
