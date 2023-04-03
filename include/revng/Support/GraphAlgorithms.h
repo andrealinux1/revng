@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <set>
+#include <variant>
 #include <vector>
 
 #include "llvm/ADT/BreadthFirstIterator.h"
@@ -421,7 +422,7 @@ bool intersect(llvm::SmallPtrSet<NodeT, 4> &First,
   FirstSet.insert(First.begin(), First.end());
   SecondSet.insert(Second.begin(), Second.end());
 
-  llvm::SmallVector<NodeT, 4> Intersection;
+  llvm::SmallVector<NodeT> Intersection;
   std::set_intersection(FirstSet.begin(),
                         FirstSet.end(),
                         SecondSet.begin(),
@@ -454,7 +455,7 @@ bool equal(llvm::SmallPtrSet<NodeT, 4> &First,
 }
 
 template<class NodeT>
-bool simplifyRegionsStep(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4> &R) {
+bool simplifyRegionsStep(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>> &R) {
   for (auto RegionIt1 = R.begin(); RegionIt1 != R.end(); RegionIt1++) {
     for (auto RegionIt2 = std::next(RegionIt1); RegionIt2 != R.end();
          RegionIt2++) {
@@ -475,15 +476,17 @@ bool simplifyRegionsStep(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4> &R) {
 }
 
 template<class NodeT>
-void simplifyRegions(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4> &Rs) {
+void simplifyRegions(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>> &Rs) {
   bool Changes = true;
   while (Changes) {
     Changes = simplifyRegionsStep(Rs);
   }
 }
 
+// Reorder the vector containing the regions so that they are in increasing size
+// order.
 template<class NodeT>
-void sortRegions(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4> &Rs) {
+void sortRegions(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>> &Rs) {
   std::sort(Rs.begin(),
             Rs.end(),
             [](llvm::SmallPtrSet<NodeT, 4> &First,
@@ -492,13 +495,568 @@ void sortRegions(llvm::SmallVector<llvm::SmallPtrSet<NodeT, 4>, 4> &Rs) {
             });
 }
 
+template<class GraphT,
+         class GT = llvm::GraphTraits<GraphT>,
+         typename NodeRef = typename GT::NodeRef>
+llvm::DenseMap<NodeRef, size_t> computeDistanceFromEntry(GraphT Source) {
+  llvm::DenseMap<NodeRef, size_t> ShortestPathFromEntry;
+
+  using SetType = llvm::bf_iterator_default_set<NodeRef>;
+  using bf_iterator = llvm::bf_iterator<GraphT, SetType, GT>;
+  auto BFSIt = bf_iterator::begin(Source);
+  auto BFSEnd = bf_iterator::end(Source);
+
+  for (; BFSIt != BFSEnd; ++BFSIt) {
+    NodeRef Block = *BFSIt;
+    size_t Depth = BFSIt.getLevel();
+
+    // Obtain the insertion iterator for the `Depth` block element.
+    auto ShortestIt = ShortestPathFromEntry.insert({ Block, Depth });
+
+    // If we already had in the map an entry for the current block, we need to
+    // revng_assert that the previously found value for the `Depth` is less or
+    // equal
+    // of the `Depth` we are inserting.
+    if (ShortestIt.second == false) {
+      revng_assert(ShortestIt.first->second <= Depth);
+    }
+  }
+
+  return ShortestPathFromEntry;
+}
+
+template<class NodeT>
+bool setContains(llvm::SmallPtrSetImpl<NodeT> &Set, NodeT &Element) {
+  return Set.contains(Element);
+}
+
+template<class GraphT, class GT = llvm::GraphTraits<GraphT>>
+auto child_range(GraphT Block) {
+  return llvm::make_range(GT::child_begin(Block), GT::child_end(Block));
+}
+
+template<class GraphT>
+auto successor_range(GraphT Block) {
+  return child_range(Block);
+}
+
+template<class GraphT>
+auto predecessor_range(GraphT Block) {
+  return child_range<GraphT, llvm::GraphTraits<llvm::Inverse<GraphT>>>(Block);
+}
+
+template<class NodeRef>
+llvm::DenseMap<NodeRef, size_t>
+getEntryCandidates(llvm::SmallPtrSetImpl<NodeRef> &Region) {
+
+  // `DenseMap` that will contain all the candidate entries of a region, with
+  // the associated incoming edges degree.
+  llvm::DenseMap<NodeRef, size_t> Result;
+
+  // We can iterate over all the predecessors of a block, if we find a pred not
+  // in the current set, we increment the counter of the entry edges.
+  for (NodeRef Block : Region) {
+    for (NodeRef Predecessor : predecessor_range(Block)) {
+      if (not setContains(Region, Predecessor)) {
+        Result[Block]++;
+      }
+    }
+  }
+
+  return Result;
+}
+
+template<class NodeT>
+size_t mapAt(llvm::DenseMap<NodeT, size_t> &Map, NodeT Element) {
+  auto MapIt = Map.find(Element);
+  revng_assert(MapIt != Map.end());
+  return MapIt->second;
+}
+
+template<class NodeT>
+NodeT electEntry(llvm::DenseMap<NodeT, size_t> &EntryCandidates,
+                 llvm::DenseMap<NodeT, size_t> &ShortestPathFromEntry,
+                 llvm::SmallVectorImpl<NodeT> &RPOT) {
+  // Elect the Entry as the the candidate entry with the largest number of
+  // incoming edges from outside the region.
+  // If there's a tie, i.e. there are 2 or more candidate entries with the
+  // same number of incoming edges from an outer region, we select the entry
+  // with the minimal shortest path from entry.
+  // It it's still a tie, i.e. there are 2 or more candidate entries with the
+  // same number of incoming edges from an outer region and the same minimal
+  // shortest path from entry, then we disambiguate by picking the entry that
+  // comes first in RPOT.
+  NodeT Entry = Entry = EntryCandidates.begin()->first;
+  {
+    size_t MaxNEntries = EntryCandidates.begin()->second;
+    auto ShortestPathIt = ShortestPathFromEntry.find(Entry);
+    revng_assert(ShortestPathIt != ShortestPathFromEntry.end());
+    size_t ShortestPath = mapAt(ShortestPathFromEntry, Entry);
+    auto EntriesEnd = EntryCandidates.end();
+    for (NodeT Block : RPOT) {
+      auto EntriesIt = EntryCandidates.find(Block);
+      if (EntriesIt != EntriesEnd) {
+        const auto &[EntryCandidate, NumIncoming] = *EntriesIt;
+        if (NumIncoming > MaxNEntries) {
+          Entry = EntryCandidate;
+          ShortestPath = mapAt(ShortestPathFromEntry, EntryCandidate);
+        } else if (NumIncoming == MaxNEntries) {
+          size_t SP = mapAt(ShortestPathFromEntry, EntryCandidate);
+          if (SP < ShortestPath) {
+            Entry = EntryCandidate;
+            ShortestPath = SP;
+          }
+        }
+      }
+    }
+  }
+  revng_assert(Entry != nullptr);
+  return Entry;
+}
+
+template<class NodeRef>
+llvm::SmallVector<std::pair<NodeRef, NodeRef>>
+getOutlinedEntries(llvm::DenseMap<NodeRef, size_t> &EntryCandidates,
+                   llvm::SmallPtrSetImpl<NodeRef> &Region,
+                   NodeRef Entry) {
+  llvm::SmallVector<std::pair<NodeRef, NodeRef>> LateEntryPairs;
+  for (const auto &[Other, NumIncoming] : EntryCandidates) {
+    if (Other != Entry) {
+      llvm::SmallVector<NodeRef> OutsidePredecessor;
+      for (NodeRef Predecessor : predecessor_range(Other)) {
+        if (not setContains(Region, Predecessor)) {
+          OutsidePredecessor.push_back(Predecessor);
+          LateEntryPairs.push_back({ Predecessor, Other });
+        }
+      }
+      revng_assert(OutsidePredecessor.size() == NumIncoming);
+    }
+  }
+
+  return LateEntryPairs;
+}
+
+template<class NodeRef>
+llvm::SmallVector<std::pair<NodeRef, NodeRef>>
+getExitNodePairs(llvm::SmallPtrSetImpl<NodeRef> &Region) {
+
+  // Vector that contains the pairs of exit/successor node pairs.
+  llvm::SmallVector<std::pair<NodeRef, NodeRef>> ExitSuccessorPairs;
+
+  // We iterate over all the successors of a block, if we find a successor not
+  // in the current set, we add the pairs of node to the set.
+  for (NodeRef Block : Region) {
+    for (NodeRef Successor : successor_range(Block)) {
+      if (not setContains(Region, Successor)) {
+        ExitSuccessorPairs.push_back({ Block, Successor });
+      }
+    }
+  }
+
+  return ExitSuccessorPairs;
+}
+
+template<class NodeRef>
+llvm::SmallVector<std::pair<NodeRef, NodeRef>>
+getPredecessorNodePairs(NodeRef Node) {
+  llvm::SmallVector<std::pair<NodeRef, NodeRef>> PredecessorNodePairs;
+  for (NodeRef Predecessor : predecessor_range(Node)) {
+    PredecessorNodePairs.push_back({ Predecessor, Node });
+  }
+
+  return PredecessorNodePairs;
+}
+
+template<class NodeRef>
+llvm::SmallVector<std::pair<NodeRef, NodeRef>>
+getLoopPredecessorNodePairs(NodeRef Node,
+                            llvm::SmallPtrSetImpl<NodeRef> &Region) {
+  llvm::SmallVector<std::pair<NodeRef, NodeRef>> LoopPredecessorNodePairs;
+  for (NodeRef Predecessor : predecessor_range(Node)) {
+    if (not setContains(Region, Predecessor)) {
+      LoopPredecessorNodePairs.push_back({ Predecessor, Node });
+    }
+  }
+
+  return LoopPredecessorNodePairs;
+}
+
+template<class NodeRef>
+llvm::SmallVector<std::pair<NodeRef, NodeRef>>
+getContinueNodePairs(NodeRef Entry,
+                     llvm::SmallPtrSetImpl<NodeRef> &Region,
+                     NodeRef IgnoredNode) {
+  llvm::SmallVector<std::pair<NodeRef, NodeRef>> ContinueNodePairs;
+  for (NodeRef Predecessor : predecessor_range(Entry)) {
+    if (Predecessor != IgnoredNode and setContains(Region, Predecessor)) {
+      ContinueNodePairs.push_back({ Predecessor, Entry });
+    }
+  }
+
+  return ContinueNodePairs;
+}
+
 namespace revng::detail {
+
+template<class NodeT>
+class RegionTree;
+
+template<class NodeT>
+class RegionNode {
+public:
+  using BlockNode = NodeT;
+
+  struct ChildRegionDescriptor {
+    size_t ChildIndex;
+    RegionTree<NodeT> *OwningRegionTree;
+  };
+
+private:
+  using links_container = llvm::SmallVector<BlockNode>;
+  using links_iterator = typename links_container::iterator;
+  using links_const_iterator = typename links_container::const_iterator;
+  using links_range = llvm::iterator_range<links_iterator>;
+  using links_const_range = llvm::iterator_range<links_const_iterator>;
+
+  RegionTree<NodeT> &OwningRegionTree;
+
+  using getPointerT = RegionNode *(*) (ChildRegionDescriptor &);
+  using getConstPointerT =
+    const RegionNode *(*) (const ChildRegionDescriptor &);
+
+  static RegionNode *getPointer(ChildRegionDescriptor &Successor) {
+    RegionTree<NodeT> *OwningRegionTree = Successor.OwningRegionTree;
+    size_t ChildIndex = Successor.ChildIndex;
+    RegionNode *ChildRegionPointer = &OwningRegionTree->getRegion(ChildIndex);
+    revng_assert(ChildRegionPointer != nullptr);
+    return ChildRegionPointer;
+  }
+
+  static_assert(std::is_same_v<decltype(&getPointer), getPointerT>);
+
+  static const RegionNode *
+  getConstPointer(const ChildRegionDescriptor &Successor) {
+    RegionTree<NodeT> *OwningRegionTree = Successor.OwningRegionTree;
+    size_t ChildIndex = Successor.ChildIndex;
+    RegionNode *ChildRegionPointer = &OwningRegionTree->getRegion(ChildIndex);
+    revng_assert(ChildRegionPointer != nullptr);
+    return ChildRegionPointer;
+  }
+
+  static_assert(std::is_same_v<decltype(&getConstPointer), getConstPointerT>);
+
+  using succ_container = llvm::SmallVector<ChildRegionDescriptor>;
+  using succ_naked_it = typename succ_container::iterator;
+  using succ_naked_const_it = typename succ_container::const_iterator;
+  using succ_naked_range = llvm::iterator_range<succ_naked_it>;
+  using succ_naked_const_range = llvm::iterator_range<succ_naked_const_it>;
+  using succ_iterator = llvm::mapped_iterator<succ_naked_it, getPointerT>;
+  using succ_const_iterator = llvm::mapped_iterator<succ_naked_const_it,
+                                                    getConstPointerT>;
+  using succ_range = llvm::iterator_range<succ_iterator>;
+  using succ_const_range = llvm::iterator_range<succ_const_iterator>;
+
+  enum EntryState { Invalid, NodesVector, ChildrenVector };
+
+private:
+  void erase(links_container &V, BlockNode Value) {
+    V.erase(std::remove(V.begin(), V.end(), Value), V.end());
+  }
+
+  void erase(succ_container &V, ChildRegionDescriptor Value) {
+    V.erase(std::remove(V.begin(), V.end(), Value), V.end());
+  }
+
+private:
+  links_container Nodes;
+  succ_container Children;
+  EntryState EntryState = Invalid;
+
+public:
+  RegionNode(RegionTree<NodeT> &RegionTree) : OwningRegionTree(RegionTree) {}
+
+  RegionNode(const RegionNode &) = default;
+  RegionNode(RegionNode &&) = default;
+  RegionNode &operator=(const RegionNode &) = default;
+  RegionNode &operator=(RegionNode &&) = default;
+
+  links_iterator begin() { return Nodes.begin(); }
+  links_const_iterator begin() const { return Nodes.begin(); }
+  links_iterator end() { return Nodes.end(); }
+  links_const_iterator end() const { return Nodes.end(); }
+  links_range blocks() { return llvm::make_range(begin(), end()); }
+  links_const_range blocks() const { return llvm::make_range(begin(), end()); }
+
+  llvm::SmallSet<NodeT, 4> getBlocksSet() {
+    llvm::SmallSet<NodeT, 4> BlocksSet;
+    for (NodeT Block : blocks()) {
+      BlocksSet.insert(Block);
+    }
+
+    return BlocksSet;
+  }
+
+  succ_naked_it succ_begin_naked() { return Children.begin(); }
+  succ_naked_it succ_end_naked() { return Children.end(); }
+  succ_naked_const_it succ_const_begin_naked() { return Children.begin(); }
+  succ_naked_const_it succ_const_end_naked() { return Children.end(); }
+  succ_naked_range successor_range_naked() {
+    return llvm::make_range(succ_begin_naked(), succ_end_naked());
+  }
+  succ_naked_const_range successor_const_range_naked() {
+    return llvm::make_range(succ_const_begin_naked(), succ_const_end_naked());
+  }
+
+  // If we invoke this method, the entry node must be a block node, so no
+  // substitution with a child region descriptor must have happened.
+  NodeT getEntryBlock() {
+    revng_assert(EntryState == NodesVector);
+    revng_assert(!Nodes.empty());
+    return Nodes[0];
+  }
+
+  std::optional<NodeT> getEntryIfBlock() {
+    if (EntryState == NodesVector) {
+      revng_assert(!Nodes.empty());
+      return Nodes[0];
+    }
+    return std::nullopt;
+  }
+
+  std::variant<NodeT, ChildRegionDescriptor *> getEntry() {
+    revng_assert(EntryState != Invalid);
+    if (EntryState == NodesVector) {
+      revng_assert(!Nodes.empty());
+      return Nodes[0];
+    } else if (EntryState == ChildrenVector) {
+      revng_assert(!Children.empty());
+      return &Children[0];
+    }
+    __builtin_unreachable();
+  }
+
+  succ_iterator succ_begin() {
+    return llvm::map_iterator(Children.begin(), getPointer);
+  }
+  succ_const_iterator succ_const_begin() const {
+    return llvm::map_iterator(Children.begin(), getConstPointer);
+  }
+  succ_iterator succ_end() {
+    return llvm::map_iterator(Children.end(), getPointer);
+  }
+  succ_const_iterator succ_const_end() const {
+    return llvm::map_iterator(Children.end(), getConstPointer);
+  }
+  succ_range successor_range() {
+    return llvm::make_range(succ_begin(), succ_end());
+  }
+  succ_const_range successor_const_range() {
+    return llvm::make_range(succ_const_begin(), succ_const_end());
+  }
+
+  // Insert helpers.
+  void insertElement(BlockNode Element) { Nodes.push_back(Element); }
+  void insertElement(size_t Element) {
+    struct ChildRegionDescriptor ElementDescriptor = { Element,
+                                                       &OwningRegionTree };
+    Children.push_back(ElementDescriptor);
+  }
+
+  void insertElementEntry(BlockNode Element) {
+    Nodes.insert(begin(), Element);
+    EntryState = NodesVector;
+  }
+  void insertElementEntry(size_t Element) {
+    struct ChildRegionDescriptor ElementDescriptor = { Element,
+                                                       &OwningRegionTree };
+    Children.insert(succ_begin_naked(), ElementDescriptor);
+    EntryState = ChildrenVector;
+  }
+
+  // If we are removing the first element (of either the `Nodes` or `Children`
+  // vector), we signal it with the return code.
+  bool eraseElement(BlockNode Element) {
+    bool IsEntry = (Nodes.front() == Element) and (EntryState == NodesVector);
+    erase(Nodes, Element);
+    return IsEntry;
+  }
+
+  bool eraseElement(ChildRegionDescriptor Element) {
+    bool IsEntry = (Children.front() == Element)
+                   and (EntryState == ChildrenVector);
+    erase(Children, Element);
+    return IsEntry;
+  }
+
+  bool isChildRegionEntry(RegionNode *ChildRegion) {
+
+    // The `ChildRegion` can be the entry, only if the entry block is indeed an
+    // index to a `ChildRegion`, and the first region in the `Children` vector
+    // is indeedthe passed one.
+    revng_assert(!Children.empty());
+    if (EntryState == ChildrenVector) {
+      ChildRegionDescriptor &Entry = Children[0];
+      if (&Entry.OwningRegionTree->getRegion(Entry.ChildIndex) == ChildRegion) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool containsBlock(const BlockNode Candidate) {
+    llvm::SmallVector<RegionNode *> ToAnalyze;
+    ToAnalyze.push_back(this);
+
+    while (!ToAnalyze.empty()) {
+      RegionNode *LastRegion = ToAnalyze.back();
+      ToAnalyze.pop_back();
+
+      // Insert all the element in the currently analyzed region in a set to
+      // check for the containement criteria.
+      llvm::SmallSet<BlockNode, 4> RegionSet;
+      for (BlockNode Element : *LastRegion) {
+        RegionSet.insert(Element);
+      }
+
+      // Finish comparison if we find the node in the current `RegionSet`.
+      if (RegionSet.contains(Candidate)) {
+        return true;
+      }
+
+      // Enqueue all the children regions.
+      for (RegionNode *ChildRegion : LastRegion->successor_range()) {
+        ToAnalyze.push_back(ChildRegion);
+      }
+    }
+
+    // If the exploration of all the nested regions did not find the node, we
+    // can return false.
+    return false;
+  }
+
+  llvm::SmallVector<BlockNode> getAllNestedBlocks() {
+    llvm::SmallVector<RegionNode *> ToAnalyze;
+    ToAnalyze.push_back(this);
+
+    llvm::SmallVector<BlockNode> Result;
+
+    while (!ToAnalyze.empty()) {
+      RegionNode *LastRegion = ToAnalyze.back();
+      ToAnalyze.pop_back();
+
+      for (BlockNode Element : *LastRegion) {
+        Result.push_back(Element);
+      }
+
+      for (RegionNode *ChildRegion : LastRegion->successor_range()) {
+        ToAnalyze.push_back(ChildRegion);
+      }
+    }
+
+    return Result;
+  }
+
+  llvm::DenseMap<BlockNode, size_t>
+  getEntryCandidates(RegionNode *ParentRegion) {
+
+    // `DenseMap` that will contain all the candidate entries of the current
+    // region, with the associated incoming edges degree.
+    llvm::DenseMap<BlockNode, size_t> Result;
+
+    // We iterate over all the predecessors of a block, if we find a predecessor
+    // not in the current region, but which is in the parent region, we
+    // increment the counter of the entry edges.
+    // We need to explicitly look in the parent region only, because in
+    // principle we could have a late entry pointing in a region nested
+    // arbitrarly in other regions. In this way, we outline the iteration only
+    // when the `ParentRegion` is indeed the region from where the late entry
+    // edge is departing from.
+    for (BlockNode Block : getAllNestedBlocks()) {
+      for (BlockNode Predecessor : predecessor_range(Block)) {
+        if (not containsBlock(Predecessor)
+            and ParentRegion->containsBlock(Predecessor)) {
+          Result[Block]++;
+        }
+      }
+    }
+
+    return Result;
+  }
+
+  llvm::SmallVector<std::pair<BlockNode, BlockNode>>
+  getOutlinedEntries(llvm::DenseMap<BlockNode, size_t> &EntryCandidates,
+                     BlockNode Entry,
+                     RegionNode *ParentRegion) {
+    llvm::SmallVector<std::pair<BlockNode, BlockNode>> LateEntryPairs;
+    for (const auto &[Other, NumIncoming] : EntryCandidates) {
+      if (Other != Entry) {
+        llvm::SmallVector<BlockNode> OutsidePredecessor;
+        for (BlockNode Predecessor : predecessor_range(Other)) {
+          if (not containsBlock(Predecessor)) {
+            OutsidePredecessor.push_back(Predecessor);
+            LateEntryPairs.push_back({ Predecessor, Other });
+          }
+        }
+        revng_assert(OutsidePredecessor.size() == NumIncoming);
+      }
+    }
+
+    return LateEntryPairs;
+  }
+};
+
+template<class NodeT>
+class RegionTree {
+  using RegionVector = RegionNode<NodeT>;
+
+public:
+  using links_container = llvm::SmallVector<RegionVector>;
+  using links_it = typename links_container::iterator;
+  using links_const_it = typename links_container::const_iterator;
+  using links_rev_it = typename links_container::reverse_iterator;
+  using links_const_rev_it = typename links_container::const_reverse_iterator;
+  using links_range = llvm::iterator_range<links_it>;
+  using links_rev_range = llvm::iterator_range<links_rev_it>;
+  using links_const_range = llvm::iterator_range<links_const_it>;
+  using links_const_rev_range = llvm::iterator_range<links_const_rev_it>;
+
+private:
+  links_container Regions;
+
+public:
+  RegionTree() = default;
+
+  void clear() { Regions.clear(); }
+
+  void insertRegion(RegionVector &&Region) {
+    Regions.emplace_back(std::move(Region));
+  }
+
+  RegionVector &front() { return Regions.front(); }
+
+  links_it begin() { return Regions.begin(); }
+  links_const_it begin() const { return Regions.begin(); }
+  links_it end() { return Regions.end(); }
+  links_const_it end() const { return Regions.end(); }
+  links_range regions() { return llvm::make_range(begin(), end()); }
+  links_const_range regions() const { return llvm::make_range(begin(), end()); }
+
+  links_rev_it rbegin() { return Regions.rbegin(); }
+  links_const_rev_it rbegin() const { return Regions.rbegin(); }
+  links_rev_it rend() { return Regions.rend(); }
+  links_const_rev_it rend() const { return Regions.rend(); }
+  links_rev_range reverseRegions() {
+    return llvm::make_range(rbegin(), rend());
+  }
+  links_const_rev_range reverseRegions() const {
+    return llvm::make_range(rbegin(), rend());
+  }
+
+  RegionVector &getRegion(size_t Index) { return Regions[Index]; }
+};
+
 using ParentMap = llvm::DenseMap<std::ptrdiff_t, std::ptrdiff_t>;
 
-// TODO: this data structure will be responsible of handling the child/parent
-//       relationship of identified regions. We now implemented this with
-//       keeping indexes on the underlying vector around, but in future we may
-//       want to move the ownership inside and expose `GraphTraits`.
 template<class NodeT>
 class ParentTree {
   using ParentMap = llvm::DenseMap<std::ptrdiff_t, std::ptrdiff_t>;
@@ -558,7 +1116,7 @@ public:
     // TODO: We may want to soft fail in this situation, if we allow to query
     //       the data structure with no assurance that the intended region is
     //       present.
-    revng_assert(false);
+    revng_abort();
   }
 
   // TODO: we need this method because we cannot have `std::optional` with
@@ -651,204 +1209,3 @@ public:
 };
 
 } // namespace revng::detail
-
-template<class GraphT,
-         class GT = llvm::GraphTraits<GraphT>,
-         typename NodeRef = typename GT::NodeRef>
-llvm::DenseMap<NodeRef, size_t> computeDistanceFromEntry(GraphT Source) {
-  llvm::DenseMap<NodeRef, size_t> ShortestPathFromEntry;
-
-  using SetType = llvm::bf_iterator_default_set<NodeRef>;
-  using bf_iterator = llvm::bf_iterator<GraphT, SetType, GT>;
-  auto BFSIt = bf_iterator::begin(Source);
-  auto BFSEnd = bf_iterator::end(Source);
-
-  for (; BFSIt != BFSEnd; ++BFSIt) {
-    NodeRef Block = *BFSIt;
-    size_t Depth = BFSIt.getLevel();
-
-    // Obtain the insertion iterator for the `Depth` block element.
-    auto ShortestIt = ShortestPathFromEntry.insert({ Block, Depth });
-
-    // If we already had in the map an entry for the current block, we need to
-    // revng_assert that the previously found value for the `Depth` is less or
-    // equal of the `Depth` we are inserting.
-    if (ShortestIt.second == false) {
-      revng_assert(ShortestIt.first->second <= Depth);
-    }
-  }
-
-  return ShortestPathFromEntry;
-}
-
-template<class NodeT>
-bool setContains(llvm::SmallPtrSetImpl<NodeT> &Set, NodeT &Element) {
-  return Set.contains(Element);
-}
-
-template<class GraphT,
-         class GT = llvm::GraphTraits<llvm::Inverse<GraphT>>,
-         typename NodeRef = typename GT::NodeRef>
-llvm::DenseMap<NodeRef, size_t>
-getEntryCandidates(llvm::SmallPtrSetImpl<NodeRef> &Region) {
-
-  // `DenseMap` that will contain all the candidate entries of a region, with
-  // the associated incoming edges degree.
-  llvm::DenseMap<NodeRef, size_t> Result;
-
-  // We can iterate over all the predecessors of a block, if we find a pred not
-  // in the current set, we increment the counter of the entry edges.
-  for (NodeRef Block : Region) {
-    for (NodeRef Predecessor :
-         llvm::make_range(GT::child_begin(Block), GT::child_end(Block))) {
-      if (not setContains(Region, Predecessor)) {
-        Result[Block]++;
-      }
-    }
-  }
-
-  return Result;
-}
-
-template<class NodeT>
-size_t mapAt(llvm::DenseMap<NodeT, size_t> &Map, NodeT Element) {
-  auto MapIt = Map.find(Element);
-  revng_assert(MapIt != Map.end());
-  return MapIt->second;
-}
-
-template<class NodeT>
-NodeT electEntry(llvm::DenseMap<NodeT, size_t> &EntryCandidates,
-                 llvm::DenseMap<NodeT, size_t> &ShortestPathFromEntry,
-                 llvm::SmallVectorImpl<NodeT> &RPOT) {
-  // Elect the Entry as the the candidate entry with the largest number of
-  // incoming edges from outside the region.
-  // If there's a tie, i.e. there are 2 or more candidate entries with the
-  // same number of incoming edges from an outer region, we select the entry
-  // with the minimal shortest path from entry.
-  // It it's still a tie, i.e. there are 2 or more candidate entries with the
-  // same number of incoming edges from an outer region and the same minimal
-  // shortest path from entry, then we disambiguate by picking the entry that
-  // comes first in RPOT.
-  NodeT Entry = Entry = EntryCandidates.begin()->first;
-  {
-    size_t MaxNEntries = EntryCandidates.begin()->second;
-    auto ShortestPathIt = ShortestPathFromEntry.find(Entry);
-    revng_assert(ShortestPathIt != ShortestPathFromEntry.end());
-    size_t ShortestPath = mapAt(ShortestPathFromEntry, Entry);
-    auto EntriesEnd = EntryCandidates.end();
-    for (NodeT Block : RPOT) {
-      auto EntriesIt = EntryCandidates.find(Block);
-      if (EntriesIt != EntriesEnd) {
-        const auto &[EntryCandidate, NumIncoming] = *EntriesIt;
-        if (NumIncoming > MaxNEntries) {
-          Entry = EntryCandidate;
-          ShortestPath = mapAt(ShortestPathFromEntry, EntryCandidate);
-        } else if (NumIncoming == MaxNEntries) {
-          size_t SP = mapAt(ShortestPathFromEntry, EntryCandidate);
-          if (SP < ShortestPath) {
-            Entry = EntryCandidate;
-            ShortestPath = SP;
-          }
-        }
-      }
-    }
-  }
-  revng_assert(Entry != nullptr);
-  return Entry;
-}
-
-template<class GraphT,
-         class GT = llvm::GraphTraits<llvm::Inverse<GraphT>>,
-         typename NodeRef = typename GT::NodeRef>
-llvm::SmallVector<std::pair<NodeRef, NodeRef>>
-getOutlinedEntries(llvm::DenseMap<NodeRef, size_t> &EntryCandidates,
-                   llvm::SmallPtrSetImpl<NodeRef> &Region,
-                   NodeRef Entry) {
-  llvm::SmallVector<std::pair<NodeRef, NodeRef>> LateEntryPairs;
-  for (const auto &[Other, NumIncoming] : EntryCandidates) {
-    if (Other != Entry) {
-      llvm::SmallVector<NodeRef> OutsidePredecessor;
-      for (NodeRef Predecessor :
-           llvm::make_range(GT::child_begin(Other), GT::child_end(Other))) {
-        if (not setContains(Region, Predecessor)) {
-          OutsidePredecessor.push_back(Predecessor);
-          LateEntryPairs.push_back({ Predecessor, Other });
-        }
-      }
-      revng_assert(OutsidePredecessor.size() == NumIncoming);
-    }
-  }
-
-  return LateEntryPairs;
-}
-
-template<class GraphT,
-         class GT = llvm::GraphTraits<GraphT>,
-         typename NodeRef = typename GT::NodeRef>
-llvm::SmallVector<std::pair<NodeRef, NodeRef>>
-getExitNodePairs(llvm::SmallPtrSetImpl<NodeRef> &Region) {
-
-  // Vector that contains the pairs of exit/successor node pairs.
-  llvm::SmallVector<std::pair<NodeRef, NodeRef>> ExitSuccessorPairs;
-
-  // We iterate over all the successors of a block, if we find a successor not
-  // in the current set, we add the pairs of node to the set.
-  for (NodeRef Block : Region) {
-    for (NodeRef Successor :
-         llvm::make_range(GT::child_begin(Block), GT::child_end(Block))) {
-      if (not setContains(Region, Successor)) {
-        ExitSuccessorPairs.push_back({ Block, Successor });
-      }
-    }
-  }
-
-  return ExitSuccessorPairs;
-}
-
-template<class GraphT,
-         class GT = llvm::GraphTraits<llvm::Inverse<GraphT>>,
-         typename NodeRef = typename GT::NodeRef>
-llvm::SmallVector<std::pair<NodeRef, NodeRef>>
-getPredecessorNodePairs(NodeRef Node) {
-  llvm::SmallVector<std::pair<NodeRef, NodeRef>> PredecessorNodePairs;
-  for (NodeRef Predecessor :
-       llvm::make_range(GT::child_begin(Node), GT::child_end(Node))) {
-    PredecessorNodePairs.push_back({ Predecessor, Node });
-  }
-
-  return PredecessorNodePairs;
-}
-
-template<class GraphT,
-         class GT = llvm::GraphTraits<llvm::Inverse<GraphT>>,
-         typename NodeRef = typename GT::NodeRef>
-llvm::SmallVector<std::pair<NodeRef, NodeRef>>
-getLoopPredecessorNodePairs(NodeRef Node,
-                            llvm::SmallPtrSetImpl<NodeRef> &Region) {
-  llvm::SmallVector<std::pair<NodeRef, NodeRef>> LoopPredecessorNodePairs;
-  for (NodeRef Predecessor :
-       llvm::make_range(GT::child_begin(Node), GT::child_end(Node))) {
-    if (not setContains(Region, Predecessor)) {
-      LoopPredecessorNodePairs.push_back({ Predecessor, Node });
-    }
-  }
-
-  return LoopPredecessorNodePairs;
-}
-
-template<class GraphT,
-         class GT = llvm::GraphTraits<llvm::Inverse<GraphT>>,
-         typename NodeRef = typename GT::NodeRef>
-llvm::SmallVector<std::pair<NodeRef, NodeRef>>
-getContinueNodePairs(NodeRef Entry, llvm::SmallPtrSetImpl<NodeRef> &Region) {
-  llvm::SmallVector<std::pair<NodeRef, NodeRef>> ContinueNodePairs;
-  for (NodeRef Predecessor :
-       llvm::make_range(GT::child_begin(Entry), GT::child_end(Entry))) {
-    if (setContains(Region, Predecessor)) {
-      ContinueNodePairs.push_back({ Predecessor, Entry });
-    }
-  }
-
-  return ContinueNodePairs;
-}
