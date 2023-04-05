@@ -14,8 +14,6 @@ bool init_unit_test();
 #include "revng/ADT/GenericGraph.h"
 #include "revng/Support/GraphAlgorithms.h"
 
-using namespace llvm;
-
 struct MyForwardNode {
   MyForwardNode(int Index) : Index(Index) {}
   int Index;
@@ -140,15 +138,15 @@ void printEdge(revng::detail::EdgeDescriptor<NodeType *> &Backedge) {
 }
 
 template<class NodeType>
-void printRegion(llvm::SmallPtrSet<NodeType *, 4> &Region) {
+void printRegion(SmallSetVector<NodeType *> &Region) {
   for (auto *Block : Region) {
     llvm::dbgs() << Block->getIndex() << "\n";
   }
 }
 
 template<class NodeType>
-void printRegions(llvm::SmallVector<llvm::SmallPtrSet<NodeType *, 4>> &Rs) {
-  using BlockSet = llvm::SmallPtrSet<NodeType *, 4>;
+void printRegions(llvm::SmallVector<SmallSetVector<NodeType *>> &Rs) {
+  using BlockSet = SmallSetVector<NodeType *>;
   size_t RegionIndex = 0;
   for (BlockSet &Region : Rs) {
     llvm::dbgs() << "Region idx: " << RegionIndex << " composed by nodes: \n";
@@ -162,8 +160,8 @@ BOOST_AUTO_TEST_CASE(GetBackedgesTest) {
   using NodeType = ForwardNode<MyForwardNode>;
   auto LG = createLGGraph<NodeType>();
   using EdgeDescriptor = revng::detail::EdgeDescriptor<NodeType *>;
-  using EdgeSet = llvm::SmallSet<EdgeDescriptor, 4>;
-  using BlockSet = llvm::SmallPtrSet<NodeType *, 4>;
+  using EdgeSet = SmallSetVector<EdgeDescriptor>;
+  using BlockSet = SmallSetVector<NodeType *>;
 
   // Compute the backedges set.
   EdgeSet Backedges = getBackedges(LG.Entry);
@@ -189,8 +187,8 @@ BOOST_AUTO_TEST_CASE(SimplifyRegionsTest) {
   using NodeType = ForwardNode<MyForwardNode>;
   auto OLG = createOLGGraph<NodeType>();
   using EdgeDescriptor = revng::detail::EdgeDescriptor<NodeType *>;
-  using EdgeSet = llvm::SmallSet<EdgeDescriptor, 4>;
-  using BlockSet = llvm::SmallPtrSet<NodeType *, 4>;
+  using EdgeSet = SmallSetVector<EdgeDescriptor>;
+  using BlockSet = SmallSetVector<NodeType *>;
   using BlockSetVect = llvm::SmallVector<BlockSet>;
 
   // Compute the backedges set.
@@ -214,6 +212,7 @@ BOOST_AUTO_TEST_CASE(SimplifyRegionsTest) {
   simplifyRegions(Regions);
   llvm::dbgs() << "\nAfter simplification:\n";
   printRegions(Regions);
+
   revng_check(Regions.size() == 1);
 }
 
@@ -222,8 +221,8 @@ BOOST_AUTO_TEST_CASE(SimplifyNestedRegionsTest) {
   using NodeType = ForwardNode<MyForwardNode>;
   auto NLG = createNLGGraph<NodeType>();
   using EdgeDescriptor = revng::detail::EdgeDescriptor<NodeType *>;
-  using EdgeSet = llvm::SmallSet<EdgeDescriptor, 4>;
-  using BlockSet = llvm::SmallPtrSet<NodeType *, 4>;
+  using EdgeSet = SmallSetVector<EdgeDescriptor>;
+  using BlockSet = SmallSetVector<NodeType *>;
   using BlockSetVect = llvm::SmallVector<BlockSet>;
 
   // Compute the backedges set.
@@ -256,8 +255,8 @@ BOOST_AUTO_TEST_CASE(SimplifyInliningNestedRegionsTest) {
   using NodeType = ForwardNode<MyForwardNode>;
   auto INLG = createINLGGraph<NodeType>();
   using EdgeDescriptor = revng::detail::EdgeDescriptor<NodeType *>;
-  using EdgeSet = llvm::SmallSet<EdgeDescriptor, 4>;
-  using BlockSet = llvm::SmallPtrSet<NodeType *, 4>;
+  using EdgeSet = SmallSetVector<EdgeDescriptor>;
+  using BlockSet = SmallSetVector<NodeType *>;
   using BlockSetVect = llvm::SmallVector<BlockSet>;
 
   // Compute the backedges set.
