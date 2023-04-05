@@ -128,6 +128,37 @@ static NestedLoopGraph<NodeType> createINLGGraph() {
   return INLG;
 }
 
+template<typename NodeType>
+struct LateEntryLoopGraph {
+  using Node = NodeType;
+  GenericGraph<Node> Graph;
+  Node *Entry;
+  Node *LoopHeader;
+  Node *LoopLatch;
+  Node *Exit;
+};
+
+template<typename NodeType>
+static LateEntryLoopGraph<NodeType> createLELGGraph() {
+  LateEntryLoopGraph<NodeType> LELG;
+  auto &Graph = LELG.Graph;
+
+  // Create nodes
+  LELG.Entry = Graph.addNode(1);
+  LELG.LoopHeader = Graph.addNode(2);
+  LELG.LoopLatch = Graph.addNode(3);
+  LELG.Exit = Graph.addNode(4);
+
+  // Create edges
+  LELG.Entry->addSuccessor(LELG.LoopHeader);
+  LELG.LoopHeader->addSuccessor(LELG.LoopLatch);
+  LELG.LoopLatch->addSuccessor(LELG.Exit);
+  LELG.LoopLatch->addSuccessor(LELG.LoopHeader);
+  LELG.Entry->addSuccessor(LELG.LoopLatch);
+
+  return LELG;
+}
+
 template<class NodeType>
 void printEdge(revng::detail::EdgeDescriptor<NodeType *> &Backedge) {
   llvm::dbgs() << "Backedge: ";
@@ -180,6 +211,8 @@ BOOST_AUTO_TEST_CASE(GetBackedgesTest) {
   revng_check(Reachables.contains(LG.Entry));
   revng_check(Reachables.contains(LG.LoopLatch));
   revng_check(LG.Entry != LG.LoopLatch);
+  revng_check(Reachables[0] == LG.LoopLatch);
+  revng_check(Reachables[1] == LG.Entry);
 }
 
 BOOST_AUTO_TEST_CASE(SimplifyRegionsTest) {
@@ -194,6 +227,10 @@ BOOST_AUTO_TEST_CASE(SimplifyRegionsTest) {
   // Compute the backedges set.
   EdgeSet Backedges = getBackedges(OLG.Entry);
   revng_check(Backedges.size() == 2);
+  revng_check(Backedges[0].first == OLG.Latch);
+  revng_check(Backedges[0].second == OLG.Entry);
+  revng_check(Backedges[1].first == OLG.SecondLatch);
+  revng_check(Backedges[1].second == OLG.SecondEntry);
 
   BlockSetVect Regions;
   for (EdgeDescriptor Backedge : Backedges) {
@@ -203,6 +240,14 @@ BOOST_AUTO_TEST_CASE(SimplifyRegionsTest) {
     printRegion(RegionNodes);
     Regions.push_back(std::move(RegionNodes));
   }
+
+  revng_check(Regions.size() == 2);
+  revng_check(Regions[0][0] == OLG.Latch);
+  revng_check(Regions[0][1] == OLG.Entry);
+  revng_check(Regions[0][2] == OLG.SecondEntry);
+  revng_check(Regions[1][0] == OLG.SecondLatch);
+  revng_check(Regions[1][1] == OLG.SecondEntry);
+  revng_check(Regions[1][2] == OLG.Latch);
 
   llvm::dbgs() << "\nInitial regions:\n";
   printRegions(Regions);
@@ -214,6 +259,10 @@ BOOST_AUTO_TEST_CASE(SimplifyRegionsTest) {
   printRegions(Regions);
 
   revng_check(Regions.size() == 1);
+  revng_check(Regions[0][0] == OLG.Latch);
+  revng_check(Regions[0][1] == OLG.Entry);
+  revng_check(Regions[0][2] == OLG.SecondEntry);
+  revng_check(Regions[0][3] == OLG.SecondLatch);
 }
 
 BOOST_AUTO_TEST_CASE(SimplifyNestedRegionsTest) {
@@ -228,6 +277,10 @@ BOOST_AUTO_TEST_CASE(SimplifyNestedRegionsTest) {
   // Compute the backedges set.
   EdgeSet Backedges = getBackedges(NLG.Entry);
   revng_check(Backedges.size() == 2);
+  revng_check(Backedges[0].first == NLG.Latch);
+  revng_check(Backedges[0].second == NLG.SecondEntry);
+  revng_check(Backedges[1].first == NLG.SecondLatch);
+  revng_check(Backedges[1].second == NLG.Entry);
 
   BlockSetVect Regions;
   for (EdgeDescriptor Backedge : Backedges) {
@@ -237,6 +290,14 @@ BOOST_AUTO_TEST_CASE(SimplifyNestedRegionsTest) {
     printRegion(RegionNodes);
     Regions.push_back(std::move(RegionNodes));
   }
+
+  revng_check(Regions.size() == 2);
+  revng_check(Regions[0][0] == NLG.Latch);
+  revng_check(Regions[0][1] == NLG.SecondEntry);
+  revng_check(Regions[1][0] == NLG.SecondLatch);
+  revng_check(Regions[1][1] == NLG.Entry);
+  revng_check(Regions[1][2] == NLG.SecondEntry);
+  revng_check(Regions[1][3] == NLG.Latch);
 
   llvm::dbgs() << "\nInitial regions:\n";
   printRegions(Regions);
@@ -248,6 +309,12 @@ BOOST_AUTO_TEST_CASE(SimplifyNestedRegionsTest) {
   printRegions(Regions);
 
   revng_check(Regions.size() == 2);
+  revng_check(Regions[0][0] == NLG.Latch);
+  revng_check(Regions[0][1] == NLG.SecondEntry);
+  revng_check(Regions[1][0] == NLG.SecondLatch);
+  revng_check(Regions[1][1] == NLG.Entry);
+  revng_check(Regions[1][2] == NLG.SecondEntry);
+  revng_check(Regions[1][3] == NLG.Latch);
 }
 
 BOOST_AUTO_TEST_CASE(SimplifyInliningNestedRegionsTest) {
@@ -262,6 +329,10 @@ BOOST_AUTO_TEST_CASE(SimplifyInliningNestedRegionsTest) {
   // Compute the backedges set.
   EdgeSet Backedges = getBackedges(INLG.Entry);
   revng_check(Backedges.size() == 2);
+  revng_check(Backedges[0].first == INLG.Latch);
+  revng_check(Backedges[0].second == INLG.SecondEntry);
+  revng_check(Backedges[1].first == INLG.SecondLatch);
+  revng_check(Backedges[1].second == INLG.Entry);
 
   BlockSetVect Regions;
   for (EdgeDescriptor Backedge : Backedges) {
@@ -271,6 +342,14 @@ BOOST_AUTO_TEST_CASE(SimplifyInliningNestedRegionsTest) {
     printRegion(RegionNodes);
     Regions.push_back(std::move(RegionNodes));
   }
+
+  revng_check(Regions.size() == 2);
+  revng_check(Regions[0][0] == INLG.Latch);
+  revng_check(Regions[0][1] == INLG.SecondEntry);
+  revng_check(Regions[1][0] == INLG.SecondLatch);
+  revng_check(Regions[1][1] == INLG.Entry);
+  revng_check(Regions[1][2] == INLG.SecondEntry);
+  revng_check(Regions[1][3] == INLG.Latch);
 
   llvm::dbgs() << "\nInitial regions:\n";
   printRegions(Regions);
@@ -282,4 +361,46 @@ BOOST_AUTO_TEST_CASE(SimplifyInliningNestedRegionsTest) {
   printRegions(Regions);
 
   revng_check(Regions.size() == 2);
+  revng_check(Regions[0][0] == INLG.Latch);
+  revng_check(Regions[0][1] == INLG.SecondEntry);
+  revng_check(Regions[1][0] == INLG.SecondLatch);
+  revng_check(Regions[1][1] == INLG.Entry);
+  revng_check(Regions[1][2] == INLG.SecondEntry);
+  revng_check(Regions[1][3] == INLG.Latch);
+}
+
+BOOST_AUTO_TEST_CASE(LateEntryTest) {
+  // Create the graph.
+  using NodeType = ForwardNode<MyForwardNode>;
+  auto LELG = createLELGGraph<NodeType>();
+  using EdgeDescriptor = revng::detail::EdgeDescriptor<NodeType *>;
+  using EdgeSet = SmallSetVector<EdgeDescriptor>;
+  using BlockSet = SmallSetVector<NodeType *>;
+  using BlockSetVect = llvm::SmallVector<BlockSet>;
+
+  llvm::dbgs() << "Current Test:\n";
+
+  // Compute the backedges set.
+  EdgeSet Backedges = getBackedges(LELG.Entry);
+  revng_check(Backedges.size() == 1);
+  revng_check(Backedges[0].first == LELG.LoopLatch);
+  revng_check(Backedges[0].second == LELG.LoopHeader);
+
+  BlockSetVect Regions;
+  for (EdgeDescriptor Backedge : Backedges) {
+    printEdge(Backedge);
+    BlockSet RegionNodes = nodesBetween(Backedge.second, Backedge.first);
+    llvm::dbgs() << "Reachable nodes:\n";
+    printRegion(RegionNodes);
+    Regions.push_back(std::move(RegionNodes));
+  }
+
+  // Verify that through the backedge we can reach nodes `2` and `3`.
+  BlockSet RegionNodes = Regions[0];
+  revng_check(Regions.size() == 1);
+  revng_check(RegionNodes[0] == LELG.LoopLatch);
+  revng_check(RegionNodes[1] == LELG.LoopHeader);
+
+  llvm::dbgs() << "\nInitial regions:\n";
+  printRegions(Regions);
 }
