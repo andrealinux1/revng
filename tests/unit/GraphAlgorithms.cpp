@@ -60,8 +60,8 @@ struct OverLappingLoopGraph {
   GenericGraph<Node> Graph;
   Node *Entry;
   Node *SecondEntry;
-  Node *Latch;
-  Node *SecondLatch;
+  Node *LoopLatch;
+  Node *SecondLoopLatch;
   Node *Exit;
 };
 
@@ -73,17 +73,17 @@ static OverLappingLoopGraph<NodeType> createOLGGraph() {
   // Create nodes
   OLG.Entry = Graph.addNode(1);
   OLG.SecondEntry = Graph.addNode(2);
-  OLG.Latch = Graph.addNode(3);
-  OLG.SecondLatch = Graph.addNode(4);
+  OLG.LoopLatch = Graph.addNode(3);
+  OLG.SecondLoopLatch = Graph.addNode(4);
   OLG.Exit = Graph.addNode(5);
 
   // Create edges
   OLG.Entry->addSuccessor(OLG.SecondEntry);
-  OLG.SecondEntry->addSuccessor(OLG.Latch);
-  OLG.Latch->addSuccessor(OLG.SecondLatch);
-  OLG.Latch->addSuccessor(OLG.Entry);
-  OLG.SecondLatch->addSuccessor(OLG.SecondEntry);
-  OLG.SecondLatch->addSuccessor(OLG.Exit);
+  OLG.SecondEntry->addSuccessor(OLG.LoopLatch);
+  OLG.LoopLatch->addSuccessor(OLG.SecondLoopLatch);
+  OLG.LoopLatch->addSuccessor(OLG.Entry);
+  OLG.SecondLoopLatch->addSuccessor(OLG.SecondEntry);
+  OLG.SecondLoopLatch->addSuccessor(OLG.Exit);
 
   return OLG;
 }
@@ -93,9 +93,10 @@ struct NestedLoopGraph {
   using Node = NodeType;
   GenericGraph<Node> Graph;
   Node *Entry;
-  Node *SecondEntry;
-  Node *Latch;
-  Node *SecondLatch;
+  Node *LoopHeader;
+  Node *SecondLoopHeader;
+  Node *LoopLatch;
+  Node *SecondLoopLatch;
   Node *Exit;
 };
 
@@ -106,18 +107,20 @@ static NestedLoopGraph<NodeType> createNLGGraph() {
 
   // Create nodes
   NLG.Entry = Graph.addNode(1);
-  NLG.SecondEntry = Graph.addNode(2);
-  NLG.Latch = Graph.addNode(3);
-  NLG.SecondLatch = Graph.addNode(4);
-  NLG.Exit = Graph.addNode(5);
+  NLG.LoopHeader = Graph.addNode(2);
+  NLG.SecondLoopHeader = Graph.addNode(3);
+  NLG.LoopLatch = Graph.addNode(4);
+  NLG.SecondLoopLatch = Graph.addNode(5);
+  NLG.Exit = Graph.addNode(6);
 
   // Create edges
-  NLG.Entry->addSuccessor(NLG.SecondEntry);
-  NLG.SecondEntry->addSuccessor(NLG.Latch);
-  NLG.Latch->addSuccessor(NLG.SecondLatch);
-  NLG.Latch->addSuccessor(NLG.SecondEntry);
-  NLG.SecondLatch->addSuccessor(NLG.Entry);
-  NLG.SecondLatch->addSuccessor(NLG.Exit);
+  NLG.Entry->addSuccessor(NLG.LoopHeader);
+  NLG.LoopHeader->addSuccessor(NLG.SecondLoopHeader);
+  NLG.SecondLoopHeader->addSuccessor(NLG.LoopLatch);
+  NLG.LoopLatch->addSuccessor(NLG.SecondLoopLatch);
+  NLG.LoopLatch->addSuccessor(NLG.SecondLoopHeader);
+  NLG.SecondLoopLatch->addSuccessor(NLG.LoopHeader);
+  NLG.SecondLoopLatch->addSuccessor(NLG.Exit);
 
   return NLG;
 }
@@ -128,7 +131,7 @@ static NestedLoopGraph<NodeType> createINLGGraph() {
   auto &Graph = INLG.Graph;
 
   // Create forward inling edge.
-  INLG.Entry->addSuccessor(INLG.Latch);
+  INLG.LoopHeader->addSuccessor(INLG.LoopLatch);
   return INLG;
 }
 
@@ -242,9 +245,9 @@ BOOST_AUTO_TEST_CASE(SimplifyRegionsTest) {
   // Compute the backedges set.
   EdgeSet Backedges = getBackedges(OLG.Entry);
   revng_check(Backedges.size() == 2);
-  revng_check(Backedges[0].first == OLG.Latch);
+  revng_check(Backedges[0].first == OLG.LoopLatch);
   revng_check(Backedges[0].second == OLG.Entry);
-  revng_check(Backedges[1].first == OLG.SecondLatch);
+  revng_check(Backedges[1].first == OLG.SecondLoopLatch);
   revng_check(Backedges[1].second == OLG.SecondEntry);
 
   BlockSetVect Regions;
@@ -257,12 +260,12 @@ BOOST_AUTO_TEST_CASE(SimplifyRegionsTest) {
   }
 
   revng_check(Regions.size() == 2);
-  revng_check(Regions[0][0] == OLG.Latch);
+  revng_check(Regions[0][0] == OLG.LoopLatch);
   revng_check(Regions[0][1] == OLG.Entry);
   revng_check(Regions[0][2] == OLG.SecondEntry);
-  revng_check(Regions[1][0] == OLG.SecondLatch);
+  revng_check(Regions[1][0] == OLG.SecondLoopLatch);
   revng_check(Regions[1][1] == OLG.SecondEntry);
-  revng_check(Regions[1][2] == OLG.Latch);
+  revng_check(Regions[1][2] == OLG.LoopLatch);
 
   llvm::dbgs() << "\nInitial regions:\n";
   printRegions(Regions);
@@ -274,15 +277,15 @@ BOOST_AUTO_TEST_CASE(SimplifyRegionsTest) {
   printRegions(Regions);
 
   revng_check(Regions.size() == 1);
-  revng_check(Regions[0][0] == OLG.Latch);
+  revng_check(Regions[0][0] == OLG.LoopLatch);
   revng_check(Regions[0][1] == OLG.Entry);
   revng_check(Regions[0][2] == OLG.SecondEntry);
-  revng_check(Regions[0][3] == OLG.SecondLatch);
+  revng_check(Regions[0][3] == OLG.SecondLoopLatch);
 }
 
 BOOST_AUTO_TEST_CASE(SimplifyNestedRegionsTest) {
   // Create the graph.
-  using NodeType = ForwardNode<MyForwardNode>;
+  using NodeType = BidirectionalNode<MyBidirectionalNode>;
   auto NLG = createNLGGraph<NodeType>();
   using EdgeDescriptor = revng::detail::EdgeDescriptor<NodeType *>;
   using EdgeSet = SmallSetVector<EdgeDescriptor>;
@@ -292,10 +295,10 @@ BOOST_AUTO_TEST_CASE(SimplifyNestedRegionsTest) {
   // Compute the backedges set.
   EdgeSet Backedges = getBackedges(NLG.Entry);
   revng_check(Backedges.size() == 2);
-  revng_check(Backedges[0].first == NLG.Latch);
-  revng_check(Backedges[0].second == NLG.SecondEntry);
-  revng_check(Backedges[1].first == NLG.SecondLatch);
-  revng_check(Backedges[1].second == NLG.Entry);
+  revng_check(Backedges[0].first == NLG.LoopLatch);
+  revng_check(Backedges[0].second == NLG.SecondLoopHeader);
+  revng_check(Backedges[1].first == NLG.SecondLoopLatch);
+  revng_check(Backedges[1].second == NLG.LoopHeader);
 
   BlockSetVect Regions;
   for (EdgeDescriptor Backedge : Backedges) {
@@ -307,12 +310,12 @@ BOOST_AUTO_TEST_CASE(SimplifyNestedRegionsTest) {
   }
 
   revng_check(Regions.size() == 2);
-  revng_check(Regions[0][0] == NLG.Latch);
-  revng_check(Regions[0][1] == NLG.SecondEntry);
-  revng_check(Regions[1][0] == NLG.SecondLatch);
-  revng_check(Regions[1][1] == NLG.Entry);
-  revng_check(Regions[1][2] == NLG.SecondEntry);
-  revng_check(Regions[1][3] == NLG.Latch);
+  revng_check(Regions[0][0] == NLG.LoopLatch);
+  revng_check(Regions[0][1] == NLG.SecondLoopHeader);
+  revng_check(Regions[1][0] == NLG.SecondLoopLatch);
+  revng_check(Regions[1][1] == NLG.LoopHeader);
+  revng_check(Regions[1][2] == NLG.SecondLoopHeader);
+  revng_check(Regions[1][3] == NLG.LoopLatch);
 
   llvm::dbgs() << "\nInitial regions:\n";
   printRegions(Regions);
@@ -324,12 +327,58 @@ BOOST_AUTO_TEST_CASE(SimplifyNestedRegionsTest) {
   printRegions(Regions);
 
   revng_check(Regions.size() == 2);
-  revng_check(Regions[0][0] == NLG.Latch);
-  revng_check(Regions[0][1] == NLG.SecondEntry);
-  revng_check(Regions[1][0] == NLG.SecondLatch);
-  revng_check(Regions[1][1] == NLG.Entry);
-  revng_check(Regions[1][2] == NLG.SecondEntry);
-  revng_check(Regions[1][3] == NLG.Latch);
+  revng_check(Regions[0][0] == NLG.LoopLatch);
+  revng_check(Regions[0][1] == NLG.SecondLoopHeader);
+  revng_check(Regions[1][0] == NLG.SecondLoopLatch);
+  revng_check(Regions[1][1] == NLG.LoopHeader);
+  revng_check(Regions[1][2] == NLG.SecondLoopHeader);
+  revng_check(Regions[1][3] == NLG.LoopLatch);
+
+  // Compute the Reverse Post Order.
+  llvm::SmallVector<NodeType *> RPOT;
+  using RPOTraversal = llvm::ReversePostOrderTraversal<NodeType *>;
+  llvm::copy(RPOTraversal(NLG.Entry), std::back_inserter(RPOT));
+  revng_check(RPOT[0] == NLG.Entry);
+  revng_check(RPOT[1] == NLG.LoopHeader);
+  revng_check(RPOT[2] == NLG.SecondLoopHeader);
+  revng_check(RPOT[3] == NLG.LoopLatch);
+  revng_check(RPOT[4] == NLG.SecondLoopLatch);
+  revng_check(RPOT[5] == NLG.Exit);
+
+  // Collect the candidate entries for the identified inner region.
+  auto EntryCandidatesInner = getEntryCandidates<NodeType *>(Regions[0]);
+  auto EntryCandidatesInnerVector = EntryCandidatesInner.takeVector();
+  revng_check(EntryCandidatesInnerVector[0].first == NLG.SecondLoopHeader);
+  revng_check(EntryCandidatesInnerVector[0].second == 1);
+
+  EntryCandidatesInner = getEntryCandidates<NodeType *>(Regions[0]);
+
+  // Compute the distance of each node from the entry node.
+  auto ShortestPathFromEntry = computeDistanceFromEntry(NLG.Entry);
+
+  // Perform the election of the `Entry` node.
+  NodeType *EntryInner = electEntry<NodeType *>(EntryCandidatesInner,
+                                                ShortestPathFromEntry,
+                                                RPOT);
+
+  llvm::dbgs() << "Elected entry: " << EntryInner->getIndex() << "\n";
+  revng_check(EntryInner == NLG.SecondLoopHeader);
+
+  // Collect the candidate entries for the identified outer region.
+  auto EntryCandidatesOuter = getEntryCandidates<NodeType *>(Regions[1]);
+  auto EntryCandidatesOuterVector = EntryCandidatesOuter.takeVector();
+  revng_check(EntryCandidatesOuterVector[0].first == NLG.LoopHeader);
+  revng_check(EntryCandidatesOuterVector[0].second == 1);
+
+  EntryCandidatesOuter = getEntryCandidates<NodeType *>(Regions[1]);
+
+  // Perform the election of the `Entry` node.
+  NodeType *EntryOuter = electEntry<NodeType *>(EntryCandidatesOuter,
+                                                ShortestPathFromEntry,
+                                                RPOT);
+
+  llvm::dbgs() << "Elected entry: " << EntryOuter->getIndex() << "\n";
+  revng_check(EntryOuter == NLG.LoopHeader);
 }
 
 BOOST_AUTO_TEST_CASE(SimplifyInliningNestedRegionsTest) {
@@ -342,12 +391,12 @@ BOOST_AUTO_TEST_CASE(SimplifyInliningNestedRegionsTest) {
   using BlockSetVect = llvm::SmallVector<BlockSet>;
 
   // Compute the backedges set.
-  EdgeSet Backedges = getBackedges(INLG.Entry);
+  EdgeSet Backedges = getBackedges(INLG.LoopHeader);
   revng_check(Backedges.size() == 2);
-  revng_check(Backedges[0].first == INLG.Latch);
-  revng_check(Backedges[0].second == INLG.SecondEntry);
-  revng_check(Backedges[1].first == INLG.SecondLatch);
-  revng_check(Backedges[1].second == INLG.Entry);
+  revng_check(Backedges[0].first == INLG.LoopLatch);
+  revng_check(Backedges[0].second == INLG.SecondLoopHeader);
+  revng_check(Backedges[1].first == INLG.SecondLoopLatch);
+  revng_check(Backedges[1].second == INLG.LoopHeader);
 
   BlockSetVect Regions;
   for (EdgeDescriptor Backedge : Backedges) {
@@ -359,12 +408,12 @@ BOOST_AUTO_TEST_CASE(SimplifyInliningNestedRegionsTest) {
   }
 
   revng_check(Regions.size() == 2);
-  revng_check(Regions[0][0] == INLG.Latch);
-  revng_check(Regions[0][1] == INLG.SecondEntry);
-  revng_check(Regions[1][0] == INLG.SecondLatch);
-  revng_check(Regions[1][1] == INLG.Entry);
-  revng_check(Regions[1][2] == INLG.SecondEntry);
-  revng_check(Regions[1][3] == INLG.Latch);
+  revng_check(Regions[0][0] == INLG.LoopLatch);
+  revng_check(Regions[0][1] == INLG.SecondLoopHeader);
+  revng_check(Regions[1][0] == INLG.SecondLoopLatch);
+  revng_check(Regions[1][1] == INLG.LoopHeader);
+  revng_check(Regions[1][2] == INLG.SecondLoopHeader);
+  revng_check(Regions[1][3] == INLG.LoopLatch);
 
   llvm::dbgs() << "\nInitial regions:\n";
   printRegions(Regions);
@@ -376,12 +425,12 @@ BOOST_AUTO_TEST_CASE(SimplifyInliningNestedRegionsTest) {
   printRegions(Regions);
 
   revng_check(Regions.size() == 2);
-  revng_check(Regions[0][0] == INLG.Latch);
-  revng_check(Regions[0][1] == INLG.SecondEntry);
-  revng_check(Regions[1][0] == INLG.SecondLatch);
-  revng_check(Regions[1][1] == INLG.Entry);
-  revng_check(Regions[1][2] == INLG.SecondEntry);
-  revng_check(Regions[1][3] == INLG.Latch);
+  revng_check(Regions[0][0] == INLG.LoopLatch);
+  revng_check(Regions[0][1] == INLG.SecondLoopHeader);
+  revng_check(Regions[1][0] == INLG.SecondLoopLatch);
+  revng_check(Regions[1][1] == INLG.LoopHeader);
+  revng_check(Regions[1][2] == INLG.SecondLoopHeader);
+  revng_check(Regions[1][3] == INLG.LoopLatch);
 }
 
 BOOST_AUTO_TEST_CASE(LateEntryTest) {
@@ -428,14 +477,18 @@ BOOST_AUTO_TEST_CASE(LateEntryTest) {
   revng_check(EntryCandidatesVector[1].first == LELG.LoopHeader);
   revng_check(EntryCandidatesVector[1].second == 1);
 
+  // Re-compute the entry candidates, since we consumed the map to check for the
+  // results.
+  EntryCandidates = getEntryCandidates<NodeType *>(RegionNodes);
+
   // Compute the Reverse Post Order.
   llvm::SmallVector<NodeType *> RPOT;
   using RPOTraversal = llvm::ReversePostOrderTraversal<NodeType *>;
   llvm::copy(RPOTraversal(LELG.Entry), std::back_inserter(RPOT));
-
-  // Re-compute the entry candidates, since we consumed the map to check for the
-  // results.
-  EntryCandidates = getEntryCandidates<NodeType *>(RegionNodes);
+  revng_check(RPOT[0] == LELG.Entry);
+  revng_check(RPOT[1] == LELG.LoopHeader);
+  revng_check(RPOT[2] == LELG.LoopLatch);
+  revng_check(RPOT[3] == LELG.Exit);
 
   // Compute the distance of each node from the entry node.
   auto ShortestPathFromEntry = computeDistanceFromEntry(LELG.Entry);
