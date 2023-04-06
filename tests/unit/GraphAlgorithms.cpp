@@ -20,6 +20,10 @@ struct MyForwardNode {
   int getIndex() { return Index; }
 };
 
+struct MyBidirectionalNode : MyForwardNode {
+  MyBidirectionalNode(int Index) : MyForwardNode(Index) {}
+};
+
 template<typename NodeType>
 struct LoopGraph {
   using Node = NodeType;
@@ -166,6 +170,7 @@ void printEdge(revng::detail::EdgeDescriptor<NodeType *> &Backedge) {
   llvm::dbgs() << " -> ";
   llvm::dbgs() << Backedge.second->getIndex();
   llvm::dbgs() << "\n";
+  llvm::dbgs() << "\n";
 }
 
 template<class NodeType>
@@ -173,6 +178,7 @@ void printRegion(SmallSetVector<NodeType *> &Region) {
   for (auto *Block : Region) {
     llvm::dbgs() << Block->getIndex() << "\n";
   }
+  llvm::dbgs() << "\n";
 }
 
 template<class NodeType>
@@ -184,6 +190,15 @@ void printRegions(llvm::SmallVector<SmallSetVector<NodeType *>> &Rs) {
     printRegion(Region);
     RegionIndex++;
   }
+  llvm::dbgs() << "\n";
+}
+
+template<class MapType>
+void printMap(MapType &Map) {
+  for (auto const &[K, V] : Map) {
+    llvm::dbgs() << "Key: " << K->getIndex() << " Value: " << V << "\n";
+  }
+  llvm::dbgs() << "\n";
 }
 
 BOOST_AUTO_TEST_CASE(GetBackedgesTest) {
@@ -371,7 +386,7 @@ BOOST_AUTO_TEST_CASE(SimplifyInliningNestedRegionsTest) {
 
 BOOST_AUTO_TEST_CASE(LateEntryTest) {
   // Create the graph.
-  using NodeType = ForwardNode<MyForwardNode>;
+  using NodeType = BidirectionalNode<MyBidirectionalNode>;
   auto LELG = createLELGGraph<NodeType>();
   using EdgeDescriptor = revng::detail::EdgeDescriptor<NodeType *>;
   using EdgeSet = SmallSetVector<EdgeDescriptor>;
@@ -403,4 +418,38 @@ BOOST_AUTO_TEST_CASE(LateEntryTest) {
 
   llvm::dbgs() << "\nInitial regions:\n";
   printRegions(Regions);
+
+  // Collect the candidate entries for the identified region.
+  auto EntryCandidates = getEntryCandidates<NodeType *>(RegionNodes);
+
+  auto EntryCandidatesVector = EntryCandidates.takeVector();
+  revng_check(EntryCandidatesVector[0].first == LELG.LoopLatch);
+  revng_check(EntryCandidatesVector[0].second == 1);
+  revng_check(EntryCandidatesVector[1].first == LELG.LoopHeader);
+  revng_check(EntryCandidatesVector[1].second == 1);
+
+  // Compute the Reverse Post Order.
+  llvm::SmallVector<NodeType *> RPOT;
+  using RPOTraversal = llvm::ReversePostOrderTraversal<NodeType *>;
+  llvm::copy(RPOTraversal(LELG.Entry), std::back_inserter(RPOT));
+
+  // Re-compute the entry candidates, since we consumed the map to check for the
+  // results.
+  EntryCandidates = getEntryCandidates<NodeType *>(RegionNodes);
+
+  // Compute the distance of each node from the entry node.
+  auto ShortestPathFromEntry = computeDistanceFromEntry(LELG.Entry);
+
+  // Perform the election of the `Entry` node.
+  NodeType *Entry = electEntry<NodeType *>(EntryCandidates,
+                                           ShortestPathFromEntry,
+                                           RPOT);
+
+  llvm::dbgs() << "Elected entry: " << Entry->getIndex() << "\n";
+
+  // TODO: the entry election currently elects the `LoopLatch` node, but this is
+  // suboptimal from an identification point of view. While we insert this unit
+  // test now, we should in the future change it in order to identify the
+  // `LoopHeader` node as loop entry.
+  revng_check(Entry == LELG.LoopLatch);
 }
