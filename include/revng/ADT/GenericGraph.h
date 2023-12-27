@@ -1579,6 +1579,58 @@ public:
   static T *getEntryNode(llvm::Inverse<T *> N) { return N.Graph; };
 };
 
+// TODO: We should move the `Undirected` definition to a separate header, and
+//       offer a default implementation for `GraphTraits<Undirected<T>>` for
+//       any `T` for which you have a definition of both `GraphTraits<T>` and
+//       `GraphTraits<Inverse<T>>`
+/// This class is used as a marker class to tell the graph iterator to treat the
+/// underlying graph as an undirected one
+template<class GraphType>
+struct Undirected {
+  const GraphType &Graph;
+
+  inline Undirected(const GraphType &G) : Graph(G) {}
+};
+
+/// Specializes GraphTraits<llvm::Undirected<MutableEdgeNode<...> *>>
+template<StrictSpecializationOfMutableEdgeNode T>
+struct GraphTraits<llvm::Undirected<T *>> {
+public:
+  using NodeRef = T *;
+  using EdgeRef = typename T::EdgeView;
+
+public:
+  static auto child_begin(NodeRef N) {
+    return llvm::concat<NodeRef>(N->successors(), N->predecessors()).begin();
+  }
+
+  static auto child_end(NodeRef N) {
+    return llvm::concat<NodeRef>(N->successors(), N->predecessors()).end();
+  }
+
+  static auto child_edge_begin(NodeRef N) {
+    return llvm::concat<EdgeRef>(N->successor_edges(), N->predecessor_edges())
+      .begin();
+  }
+
+  static auto child_edge_end(NodeRef N) {
+    return llvm::concat<EdgeRef>(N->successor_edges(), N->predecessor_edges())
+      .end();
+  }
+
+  static NodeRef edge_dest(EdgeRef Edge) { return Edge.Neighbor; }
+
+  static NodeRef getEntryNode(llvm::Undirected<NodeRef> N) { return N.Graph; }
+
+public:
+  // We infer the `ChildIteratorType` directly from the `child_begin` method
+  using ChildIteratorType = decltype(child_begin(NodeRef{ nullptr }));
+
+  // We infer the `ChildEdgeIteratorType` directly from the `child_edge_begin`
+  // method
+  using ChildEdgeIteratorType = decltype(child_edge_begin(NodeRef{ nullptr }));
+};
+
 /// Specializes GraphTraits<GenericGraph<...> *>>
 template<SpecializationOfGenericGraph T>
 struct GraphTraits<T *>
