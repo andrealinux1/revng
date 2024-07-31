@@ -1609,6 +1609,11 @@ public:
   }
 
   static auto child_edge_begin(NodeRef N) {
+
+    // IVAN: we want to try to understand if this operation is safe under our
+    // assumptions, to basically get the ranges, concatenate them, and get the
+    // `begin`/`end` iterators out, wrt to the backing storage that
+    // `GenericGraph` uses
     return llvm::concat<EdgeRef>(N->successor_edges(), N->predecessor_edges())
       .begin();
   }
