@@ -198,7 +198,7 @@ inline Tag CSVsPromoted("csvs-promoted", ABIEnforced);
 inline Tag Exceptional("exceptional");
 inline Tag StructInitializer("struct-initializer");
 inline Tag OpaqueCSVValue("opaque-csv-value");
-inline Tag FunctionDispatcher("functin-dispatcher");
+inline Tag FunctionDispatcher("function-dispatcher");
 inline Tag Root("root");
 inline Tag IsolatedRoot("isolated-root");
 inline Tag CSVsAsArgumentsWrapper("csvs-as-arguments-wrapper");
