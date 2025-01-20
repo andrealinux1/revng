@@ -28,58 +28,7 @@ public:
 public:
   void run() {
 
-    // When the `SCMBuilder` is constructed, the
-    // ScopeCloserMarkerBuilder SCMBuilder(&F);
-    ScopeGraphBuilder SGBuilder(&F);
-
-    // TODO: remove this, which is only for quick testing purpose
-    // Insert a self-looping `ScopeCloser` (just to have a destination for our
-    // edge)
-    for (llvm::BasicBlock &BB : F) {
-
-      // We cannot obtain a `BlockAddress` for the entry block of a function
-      if (not(&BB == &F.getEntryBlock())) {
-        // SCMBuilder.setInsertPoint(&BB);
-        // SCMBuilder.insertScopeCloserTarget(&BB);
-        SGBuilder.addScopeCloser(&BB, &BB);
-      }
-    }
-
-#if 0
-    // Test iteration which uses `llvm::depth_first` on the `llvm::Dashed` graph
-    llvm::BasicBlock *EntryBlock = &F.getEntryBlock();
-    for (llvm::BasicBlock *BB : llvm::depth_first(llvm::Dashed(EntryBlock))) {
-      dbg << "Block " << BB->getName().str() << " scope graph successors:\n";
-      using ScopeGraph = llvm::GraphTraits<llvm::Dashed<llvm::BasicBlock *>>;
-
-      for (auto Succ = ScopeGraph::child_begin(BB);
-           Succ != ScopeGraph::child_end(BB);
-           ++Succ) {
-        dbg << "  " << (*Succ)->getName().str() << "\n";
-      }
-    }
-#endif
-
-#if 1
-    for (llvm::BasicBlock &BB : F) {
-      dbg << "Block " << BB.getName().str() << " scope graph successors:\n";
-      using ScopeGraph = llvm::GraphTraits<Scope<llvm::BasicBlock *>>;
-      for (auto Succ = ScopeGraph::child_begin(&BB);
-           Succ != ScopeGraph::child_end(&BB);
-           ++Succ) {
-        dbg << " " << (*Succ)->getName().str() << "\n";
-      }
-    }
-#endif
-
-#if 0
-    // TODO: solve the error here. It seems strange that it needs the
-    //       `llvm::GraphTraits` on the `llvm::Dashed<llvm::Function *>` too,
-    //       since the `llvm::Undirected` didn't seem to have it
-    // Print the `ScopeGraph`
-    llvm::Dashed<llvm::BasicBlock *> ScopeGraph(EntryBlock);
-    llvm::WriteGraph(ScopeGraph.getEntryNode(), "ScopeGraph.dot");
-#endif
+    dbg << "HERE\n";
 
     // 1: Perform the identification of the divergent exits and the divergent
     // branches
@@ -97,6 +46,8 @@ public:
         }
       }
     }
+
+    // TODO: rewrite the logic to collect the divergent exits
 
     // TODO: Understand if it is correct to collect all the divergent exits and
     //       then apply the transformation all together, or if it needs to be
@@ -155,15 +106,9 @@ public:
 #endif
 
     // Serialize the `ScopeGraph` for debugging purposes
-    // llvm::Dashed<llvm::BasicBlock *> ScopeGraph(&F.getEntryBlock());
     llvm::Function *PF = &F;
     Scope<llvm::Function *> ScopeGraph(PF);
     llvm::WriteGraph(ScopeGraph, "ScopeGraph.dot");
-    // llvm::ViewGraph(&ScopeGraph, "ScopeGraph");
-    // llvm::Inverse<llvm::Function *> InverseGraph(&F);
-    // llvm::ViewGraph(InverseGraph, "InverseGraph");
-    // llvm::ViewGraph<llvm::Dashed<llvm::Function *>>(ScopeGraph,
-    // "ScopeGraph");
   }
 
   /// Helper function that is used to move a specific outgoing edge `A -> Succ`
@@ -230,7 +175,7 @@ public:
 
     // TODO: We need to implement the transformation, by reverting what it is done, and by leaving the old living conditional as the first node that is encountered following the execution of the control flow coming from the function entry node
 
-    // TODO: note that the `BasicBlock` `B` has been already create in the caller, even though is empty at this stage. We may need to factor also the creation out here in the new form.
+    // TODO: note that the `BasicBlock` `B` has been already created in the caller, even though is empty at this stage. We may need to factor also the creation out here in the new form.
 
     // We verify that the `BasicBlock` `B` is empty before we start the changes
     // to the LLVMIR
@@ -455,9 +400,6 @@ public:
   }
 };
 
-// template void llvm::DomTreeBuilder::Calculate<llvm::BasicBlock, false,
-// llvm::Inverse>(DomTreeBuilder::BBDomTree &DT);
-
 char InlineDivergentScopesPass::ID = 0;
 
 static constexpr const char *Flag = "ids";
@@ -467,37 +409,9 @@ static Reg X(Flag,
 
 bool InlineDivergentScopesPass::runOnFunction(llvm::Function &F) {
 
-  // TODO: remove this DominatorTree test
-  // llvm::DominatorTreeBase<Inverse<llvm::BasicBlock>, false> DomTree;
-  // llvm::DominatorTreeBase<Scope<llvm::BasicBlock>, false> DomTree2;
-
-  // llvm::DominatorTreeBase<llvm::BasicBlock, false> DomTree;
-  llvm::DomTreeOnView<llvm::BasicBlock, Inverse> DomTree;
-  DomTree.recalculate(F);
-  DomTree.print(errs());
-  // llvm::WriteGraph(outs(), DomTree);
-  // llvm::WriteGraph(&DomTree, "pippo");
-
-  llvm::PostDomTreeOnView<llvm::BasicBlock, Inverse> PostDomTree;
-  PostDomTree.recalculate(F);
-  PostDomTree.print(errs());
-
-  llvm::DomTreeOnView<llvm::BasicBlock, DTIdentityView> DomTree3;
-  DomTree3.recalculate(F);
-  DomTree3.print(errs());
-  // llvm::WriteGraph(DomTree3, "pippo");
-
-  llvm::DominatorTreeBase<llvm::BasicBlock, false> DomTree4;
-  DomTree4.recalculate(F);
-  DomTree4.print(errs());
-
-  llvm::DomTreeOnView<llvm::BasicBlock, Scope> DomTree2;
-  DomTree2.recalculate(F);
-  DomTree2.print(errs());
-
   // Instantiate and call the `Impl` class
-  // InlineDivergentScopesImpl IDBImpl(F);
-  // IDBImpl.run();
+  InlineDivergentScopesImpl IDSImpl(F);
+  IDSImpl.run();
 
   // This is a pass which can transform the CFG by inserting blocks and
   // redirecting edges, and therefore does not preserve the CFG
