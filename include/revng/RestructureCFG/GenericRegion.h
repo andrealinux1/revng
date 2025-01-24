@@ -35,7 +35,7 @@ public:
 
   using edge = tuple_cat_t<revng::detail::EdgeDescriptor<NodeT>,
                            make_tuple_t<size_t>>;
-  using edge_container = llvm::SmallSetVector<NodeT, 4>;
+  using edge_container = llvm::SmallSetVector<edge, 4>;
   using edge_iterator = edge_container::iterator;
   using edge_range = llvm::iterator_range<edge_iterator>;
 
