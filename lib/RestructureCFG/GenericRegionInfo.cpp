@@ -179,7 +179,11 @@ void GenericRegionInfo<GraphT, GT>::electRetreatings() {
     }
 
     // Perform the exploration and collect the retreating edges
-    auto Retreatings = getBackedgesWhiteList(Head, RegionNodes);
+    auto Retreatings = getFullBackedgesWhiteList(Head, RegionNodes);
+
+    for (auto &Retreating : Retreatings) {
+      CurrentRegion->addRetreating(Retreating);
+    }
   }
 }
 
