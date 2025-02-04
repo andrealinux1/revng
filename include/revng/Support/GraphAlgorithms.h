@@ -132,8 +132,14 @@ auto graphPredecessorsSize(GraphT Block) {
 
 namespace revng::detail {
 
+/// `EdgeDescriptor` represents a pair of a `Source` and `Target` nodes
 template<class NodeT>
 using EdgeDescriptor = std::pair<NodeT, NodeT>;
+
+/// `FullEdgeDescriptor`, enhances `EdgeDescriptor` by adding the index of the
+/// `Target` node between the successors of `Source`
+template<class NodeT>
+using FullEdgeDescriptor = std::pair<EdgeDescriptor<NodeT>, size_t>;
 
 enum FilterSet {
   WhiteList,
@@ -210,16 +216,17 @@ public:
 template<revng::detail::FilterSet FilterSetType,
          class GraphT,
          class GT = llvm::GraphTraits<GraphT>>
-llvm::SmallSetVector<revng::detail::EdgeDescriptor<typename GT::NodeRef>, 4>
-getBackedgesImpl(GraphT Block,
-                 llvm::SmallPtrSet<typename GT::NodeRef, 4> &Set) {
+llvm::SmallSetVector<revng::detail::FullEdgeDescriptor<typename GT::NodeRef>, 4>
+getFullBackedgesImpl(GraphT Block,
+                     llvm::SmallPtrSet<typename GT::NodeRef, 4> &Set) {
   using NodeRef = typename GT::NodeRef;
   using StateType = typename revng::detail::DFStackBackedge<FilterSetType,
                                                             NodeRef>;
   using EdgeDescriptor = revng::detail::EdgeDescriptor<NodeRef>;
+  using FullEdgeDescriptor = revng::detail::FullEdgeDescriptor<NodeRef>;
   StateType State(Set);
 
-  llvm::SmallSetVector<EdgeDescriptor, 4> Backedges;
+  llvm::SmallSetVector<FullEdgeDescriptor, 4> Backedges;
 
   // Declare manually a custom `df_iterator`
   using bdf_iterator = llvm::df_iterator<GraphT, StateType, true, GT>;
@@ -227,10 +234,14 @@ getBackedgesImpl(GraphT Block,
   auto End = bdf_iterator::end(Block, State);
 
   for (NodeRef Block : llvm::make_range(Begin, End)) {
-    for (NodeRef Succ :
-         llvm::make_range(GT::child_begin(Block), GT::child_end(Block))) {
+    for (auto &Group :
+         llvm::enumerate(llvm::make_range(GT::child_begin(Block),
+                                          GT::child_end(Block)))) {
+      size_t Index = Group.index();
+      NodeRef Succ = Group.value();
       if (State.onStack(Succ)) {
-        Backedges.insert(EdgeDescriptor(Block, Succ));
+        Backedges.insert(FullEdgeDescriptor(EdgeDescriptor(Block, Succ),
+                                            Index));
       }
     }
   }
@@ -238,25 +249,65 @@ getBackedgesImpl(GraphT Block,
   return Backedges;
 }
 
+/// Helper function used to unwrap a `FullEdgeDescriptor` into a
+/// `EdgeDescriptor` contained into a `SmallSetVector`
+template<class NodeRef>
+llvm::SmallSetVector<revng::detail::EdgeDescriptor<NodeRef>, 4>
+unwrapEdges(llvm::SmallSetVector<revng::detail::FullEdgeDescriptor<NodeRef>, 4>
+              Input) {
+  using EdgeDescriptor = revng::detail::EdgeDescriptor<NodeRef>;
+  using ReturnSetType = llvm::SmallSetVector<EdgeDescriptor, 4>;
+  ReturnSetType Result;
+  for (const auto &[Edge, _] : Input) {
+    Result.insert(Edge);
+  }
+  return Result;
+}
+
 template<class GraphT, class GT = llvm::GraphTraits<GraphT>>
 llvm::SmallSetVector<revng::detail::EdgeDescriptor<typename GT::NodeRef>, 4>
 getBackedges(GraphT Block) {
   llvm::SmallPtrSet<typename GT::NodeRef, 4> EmptySet;
-  return getBackedgesImpl<revng::detail::FilterSet::BlackList>(Block, EmptySet);
+  return unwrapEdges(getFullBackedgesImpl<
+                     revng::detail::FilterSet::BlackList>(Block, EmptySet));
 }
 
 template<class GraphT, class GT = llvm::GraphTraits<GraphT>>
 llvm::SmallSetVector<revng::detail::EdgeDescriptor<typename GT::NodeRef>, 4>
 getBackedgesWhiteList(GraphT Block,
                       llvm::SmallPtrSet<typename GT::NodeRef, 4> &Set) {
-  return getBackedgesImpl<revng::detail::FilterSet::WhiteList>(Block, Set);
+  return unwrapEdges(getFullBackedgesImpl<
+                     revng::detail::FilterSet::WhiteList>(Block, Set));
 }
 
 template<class GraphT, class GT = llvm::GraphTraits<GraphT>>
 llvm::SmallSetVector<revng::detail::EdgeDescriptor<typename GT::NodeRef>, 4>
 getBackedgesBlackList(GraphT Block,
                       llvm::SmallPtrSet<typename GT::NodeRef, 4> &Set) {
-  return getBackedgesImpl<revng::detail::FilterSet::BlackList>(Block, Set);
+  return unwrapEdges(getFullBackedgesImpl<
+                     revng::detail::FilterSet::BlackList>(Block, Set));
+}
+
+template<class GraphT, class GT = llvm::GraphTraits<GraphT>>
+llvm::SmallSetVector<revng::detail::FullEdgeDescriptor<typename GT::NodeRef>, 4>
+getFullBackedges(GraphT Block) {
+  llvm::SmallPtrSet<typename GT::NodeRef, 4> EmptySet;
+  return getFullBackedgesImpl<revng::detail::FilterSet::BlackList>(Block,
+                                                                   EmptySet);
+}
+
+template<class GraphT, class GT = llvm::GraphTraits<GraphT>>
+llvm::SmallSetVector<revng::detail::FullEdgeDescriptor<typename GT::NodeRef>, 4>
+getFullBackedgesWhiteList(GraphT Block,
+                          llvm::SmallPtrSet<typename GT::NodeRef, 4> &Set) {
+  return getFullBackedgesImpl<revng::detail::FilterSet::WhiteList>(Block, Set);
+}
+
+template<class GraphT, class GT = llvm::GraphTraits<GraphT>>
+llvm::SmallSetVector<revng::detail::FullEdgeDescriptor<typename GT::NodeRef>, 4>
+getFullBackedgesBlackList(GraphT Block,
+                          llvm::SmallPtrSet<typename GT::NodeRef, 4> &Set) {
+  return getFullBackedgesImpl<revng::detail::FilterSet::BlackList>(Block, Set);
 }
 
 template<class GraphT, class GT>
