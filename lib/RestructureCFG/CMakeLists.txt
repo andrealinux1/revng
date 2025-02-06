@@ -14,6 +14,7 @@ revng_add_analyses_library_internal(
   BasicBlockNode.cpp
   BeautifyGHAST.cpp
   DAGifyPass.cpp
+  DecideWithGotosPass.cpp
   EnforceSingleExitPass.cpp
   ExprNode.cpp
   FallThroughScopeAnalysis.cpp
