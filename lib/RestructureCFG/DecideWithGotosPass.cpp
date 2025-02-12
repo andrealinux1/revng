@@ -2,13 +2,16 @@
 // Copyright rev.ng Labs Srl. See LICENSE.md for details.
 //
 
+#include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/Support/GenericDomTree.h"
 
 #include "revng/RestructureCFG/DecideWithGotosPass.h"
 #include "revng/RestructureCFG/ScopeGraphGraphTraits.h"
 #include "revng/Support/Debug.h"
+#include "revng/Support/GraphAlgorithms.h"
 
 using namespace llvm;
 
@@ -45,10 +48,9 @@ public:
       // TODO: Do we need to take into account the edges on the `ScopeGraph` for
       //       electing the conditional nodes? `goto` edges should not be taken
       //       into account, but what about `scope-closer` edges? Do they count
-      //       toward making a node a conditional node?
+      //       toward making a node a conditional node? I would say yes but real
+      //       motivation?
       auto Successors = llvm::children<Scope<BasicBlock *>>(PONode);
-      // size_t NumSuccessors = std::ranges::size(Successors);
-      // size_t NumSuccessors = std::distance(Successors);
       size_t NumSuccessors = std::distance(Successors.begin(),
                                            Successors.end());
       // We skip all the nodes which are not conditional
@@ -56,10 +58,54 @@ public:
         continue;
       }
 
+      revng_log(DecideWithGotosPassLogger,
+                "Processing conditional " << PONode->getName().str() << "\n");
+
       // Find the postdominator of `PONode` on the `ScopeGraph`
       llvm::PostDomTreeOnView<llvm::BasicBlock, Scope> PDT;
       PDT.recalculate(*PF);
       PDT.print(llvm::dbgs());
+
+      BasicBlock *PostDominator = PDT[PONode]->getIDom()->getBlock();
+
+      revng_log(DecideWithGotosPassLogger,
+                "The identified postdominator is "
+                  << PostDominator->getName().str() << "\n");
+
+      // Collect all the nodes between `PONode` and it post dominator
+      // auto Nodes = nodesBetween(Scope(PONode), Scope(PostDominator));
+
+      // Collect all the nodes between `PONode` and its post dominator,
+      // performing a simple DFS search
+      // TODO: confirm that the decision above is indeed the correct thing
+      llvm::df_iterator_default_set<BasicBlock *> Visited;
+      Visited.insert(PostDominator);
+      for (auto *_ :
+           llvm::depth_first_ext(Scope<llvm::BasicBlock *>(PONode), Visited)) {
+        // We just need to execute this to populate the `Visited` set
+        ;
+      }
+
+      // We remove the start and end nodes
+      Visited.erase(PONode);
+      Visited.erase(PostDominator);
+
+      // We now order the nodes following the reverse post order
+      // TODO: can we avoid to recompute the reverse post order at each
+      //       iteration and just use a global one?
+      llvm::SmallVector<BasicBlock *, 4> NodesToProcess;
+      for (BasicBlock *RPONode : llvm::ReversePostOrderTraversal(ScopeGraph)) {
+        if (Visited.contains(RPONode)) {
+          NodesToProcess.push_back(RPONode);
+        }
+      }
+
+      revng_log(DecideWithGotosPassLogger,
+                "Nodes between conditional and its postdominator, in reverse "
+                "post order:\n");
+      for (auto DFSNode : NodesToProcess) {
+        revng_log(DecideWithGotosPassLogger, "  " << DFSNode->getName().str());
+      }
     }
 
     return ModuleModified;
