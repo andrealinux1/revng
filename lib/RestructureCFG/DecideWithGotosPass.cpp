@@ -6,17 +6,34 @@
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/GenericDomTree.h"
 
 #include "revng/RestructureCFG/DecideWithGotosPass.h"
 #include "revng/RestructureCFG/ScopeGraphGraphTraits.h"
+#include "revng/RestructureCFG/ScopeGraphUtils.h"
 #include "revng/Support/Debug.h"
 #include "revng/Support/GraphAlgorithms.h"
+#include "revng/Support/IRHelpers.h"
 
 using namespace llvm;
 
 // Debug logger
 Logger<> DecideWithGotosPassLogger("decide-with-gotos");
+
+static bool isReachableOnScopeGraph(BasicBlock *Start, BasicBlock *End) {
+  for (BasicBlock *N : llvm::depth_first(Scope<BasicBlock *>(Start))) {
+    if (N == End) {
+
+      // As soon as I reach the node I'm looking for, I can early return
+      return true;
+    }
+  }
+
+  // If we didn't reach `End`, we deduce we cannot reach it
+  return false;
+}
 
 class DecideWithGotosPassImpl {
   Function &F;
@@ -105,6 +122,57 @@ public:
                 "post order:\n");
       for (auto DFSNode : NodesToProcess) {
         revng_log(DecideWithGotosPassLogger, "  " << DFSNode->getName().str());
+      }
+
+      // Process each node
+      for (BasicBlock *Candidate : NodesToProcess) {
+        llvm::SmallVector<BasicBlock *> PONodeSuccessors;
+        for (auto *Successor : llvm::children<Scope<BasicBlock *>>(PONode)) {
+          PONodeSuccessors.push_back(Successor);
+        }
+
+        // Process `Candidate` to understand if it is undecided wrt. to `PONode`
+        size_t Counter = 0;
+        llvm::SmallVector<BasicBlock *> ReachingSuccessors;
+        for (BasicBlock *PONodeSuccessor : PONodeSuccessors) {
+          if (isReachableOnScopeGraph(PONodeSuccessor, Candidate)) {
+            ReachingSuccessors.push_back(PONodeSuccessor);
+          }
+        }
+
+        if (ReachingSuccessors.size() > 1) {
+
+          // It means that a `goto` is needed
+          // TODO: here we select the first `PONode` successor as the one non
+          //       transformed into `goto`
+          for (BasicBlock *Predecessor : predecessors(Candidate)) {
+            for (BasicBlock *PONodeSuccessor : skip_front(PONodeSuccessors)) {
+              if (isReachableOnScopeGraph(PONodeSuccessor, Predecessor)) {
+
+                auto *PredecessorTerminator = Predecessor->getTerminator();
+                LLVMContext &Context = getContext(&F);
+                BasicBlock *
+                  GotoBlock = BasicBlock::Create(Context,
+                                                 "goto_"
+                                                   + Candidate->getName().str(),
+                                                 &F);
+
+                // Connect the `goto` block with the original target
+                IRBuilder<> Builder(Context);
+                Builder.SetInsertPoint(GotoBlock);
+                Builder.CreateBr(Candidate);
+
+                // Redirect the edge
+                PredecessorTerminator->replaceSuccessorWith(Candidate,
+                                                            GotoBlock);
+
+                // Insert the `goto_block` marker in the `ScopeGraph`
+                ScopeGraphBuilder SGBuilder(&F);
+                SGBuilder.makeGoto(GotoBlock);
+              }
+            }
+          }
+        }
       }
     }
 
