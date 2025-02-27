@@ -5,6 +5,7 @@
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
@@ -57,6 +58,62 @@ public:
       dbg << RPONode->getName().str() << "\n";
     }
 
+    // We compute the `PostDominatorTree` at the beginning of the pass, and we
+    // do not update it, as per design, in order not to take into consideration
+    // the changing PDT (changes caused by insertion of new exit nodes,
+    // represented by the `goto` blocks)
+    llvm::PostDomTreeOnView<llvm::BasicBlock, Scope> PDT;
+    PDT.recalculate(*PF);
+    PDT.print(llvm::dbgs());
+
+    // We preprocess the conditional nodes in order to remove any double edge
+    // between a conditional and on of their successor nodes
+    for (BasicBlock *PONode : llvm::post_order(ScopeGraph)) {
+
+      auto Successors = llvm::children<Scope<BasicBlock *>>(PONode);
+      size_t NumSuccessors = std::distance(Successors.begin(),
+                                           Successors.end());
+      // We skip all the node which are not conditional nodes
+      if (NumSuccessors <= 1) {
+        continue;
+      }
+
+      llvm::SmallPtrSet<const BasicBlock *, 2> AlreadyConnectedSuccessors;
+
+      // TODO: enumerate creates a problem with `const`ness
+      size_t Index = 0;
+      for (BasicBlock *Successor : Successors) {
+        if (not AlreadyConnectedSuccessors.contains(Successor)) {
+
+          // It is the first time we encounter `Successor`, therefore we do not
+          // need to transform its edge into a `goto`
+          AlreadyConnectedSuccessors.insert(Successor);
+        } else {
+
+          auto ConditionalTerminator = PONode->getTerminator();
+          LLVMContext &Context = getContext(&F);
+          BasicBlock *
+            GotoBlock = BasicBlock::Create(Context,
+                                           "goto_" + Successor->getName().str(),
+                                           &F);
+
+          // Connect the `goto` block with the conditional
+          IRBuilder<> Builder(Context);
+          Builder.SetInsertPoint(GotoBlock);
+          Builder.CreateBr(Successor);
+
+          // Insert the `goto_block` marker in the `ScopeGraph`
+          ScopeGraphBuilder SGBuilder(&F);
+          SGBuilder.makeGoto(GotoBlock);
+
+          // Redirect the edge
+          ConditionalTerminator->setSuccessor(Index, GotoBlock);
+        }
+
+        Index++;
+      }
+    }
+
     // We iterate over the conditional nodes in the `ScopeGraph` in post order
     // TODO: verify that processing the conditional nodes in post order is the
     //       legit thing to do
@@ -77,11 +134,6 @@ public:
 
       revng_log(DecideWithGotosPassLogger,
                 "Processing conditional " << PONode->getName().str() << "\n");
-
-      // Find the postdominator of `PONode` on the `ScopeGraph`
-      llvm::PostDomTreeOnView<llvm::BasicBlock, Scope> PDT;
-      PDT.recalculate(*PF);
-      PDT.print(llvm::dbgs());
 
       BasicBlock *PostDominator = PDT[PONode]->getIDom()->getBlock();
 
@@ -162,13 +214,13 @@ public:
                 Builder.SetInsertPoint(GotoBlock);
                 Builder.CreateBr(Candidate);
 
-                // Redirect the edge
-                PredecessorTerminator->replaceSuccessorWith(Candidate,
-                                                            GotoBlock);
-
                 // Insert the `goto_block` marker in the `ScopeGraph`
                 ScopeGraphBuilder SGBuilder(&F);
                 SGBuilder.makeGoto(GotoBlock);
+
+                // Redirect the edge
+                PredecessorTerminator->replaceSuccessorWith(Candidate,
+                                                            GotoBlock);
               }
             }
           }
