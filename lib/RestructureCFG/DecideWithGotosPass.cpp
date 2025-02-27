@@ -11,6 +11,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/GenericDomTree.h"
 
+#include "revng/ADT/ReversePostOrderTraversal.h"
 #include "revng/RestructureCFG/DecideWithGotosPass.h"
 #include "revng/RestructureCFG/ScopeGraphGraphTraits.h"
 #include "revng/RestructureCFG/ScopeGraphUtils.h"
@@ -116,7 +117,7 @@ public:
 
       llvm::SmallPtrSet<const BasicBlock *, 2> AlreadyConnectedSuccessors;
 
-      // TODO: enumerate creates a problem with `const`ness
+      // TODO: llvm::enumerate creates a problem with `const`ness
       size_t Index = 0;
       for (BasicBlock *Successor : Successors) {
         if (not AlreadyConnectedSuccessors.contains(Successor)) {
@@ -154,38 +155,31 @@ public:
                 "Processing conditional " << PONode->getName().str() << "\n");
 
       BasicBlock *PostDominator = PDT[PONode]->getIDom()->getBlock();
+      revng_assert(PostDominator);
 
       revng_log(DecideWithGotosPassLogger,
                 "The identified postdominator is "
                   << PostDominator->getName().str() << "\n");
 
-      // Collect all the nodes between `PONode` and it post dominator
-      // auto Nodes = nodesBetween(Scope(PONode), Scope(PostDominator));
-
-      // Collect all the nodes between `PONode` and its post dominator,
-      // performing a simple DFS search
-      // TODO: confirm that the decision above is indeed the correct thing
-      llvm::df_iterator_default_set<BasicBlock *> Visited;
+      // We exploit the `Visited` set, by passing it to
+      // `ReversePostOrderTraversalExt`, in order to stop the visit at the
+      // `PostDominator`
+      std::set<BasicBlock *> Visited;
       Visited.insert(PostDominator);
-      for (auto *_ :
-           llvm::depth_first_ext(Scope<llvm::BasicBlock *>(PONode), Visited)) {
-        // We just need to execute this to populate the `Visited` set
-        ;
+
+      // We collect all the nodes between the conditional `PONode` and its
+      // immediate postdominator, by using the `ReversePostOrderTraversalExt`
+      llvm::SmallVector<BasicBlock *> NodesToProcess;
+      for (BasicBlock *RPONode :
+           ReversePostOrderTraversalExt<Scope<BasicBlock *>>(PONode, Visited)) {
+        NodesToProcess.push_back(RPONode);
       }
 
-      // We remove the start and end nodes
-      Visited.erase(PONode);
-      Visited.erase(PostDominator);
-
-      // We now order the nodes following the reverse post order
-      // TODO: can we avoid to recompute the reverse post order at each
-      //       iteration and just use a global one?
-      llvm::SmallVector<BasicBlock *, 4> NodesToProcess;
-      for (BasicBlock *RPONode : llvm::ReversePostOrderTraversal(ScopeGraph)) {
-        if (Visited.contains(RPONode)) {
-          NodesToProcess.push_back(RPONode);
-        }
-      }
+      // From the collected nodes, we need to remove the first node, which
+      // corresponds to the `PONode`, which should not be processed in this
+      // round
+      revng_assert(NodesToProcess.front() == PONode);
+      NodesToProcess.erase(NodesToProcess.begin());
 
       revng_log(DecideWithGotosPassLogger,
                 "Nodes between conditional and its postdominator, in reverse "
