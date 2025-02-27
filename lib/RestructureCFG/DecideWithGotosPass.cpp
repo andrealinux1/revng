@@ -36,6 +36,42 @@ static bool isReachableOnScopeGraph(BasicBlock *Start, BasicBlock *End) {
   return false;
 }
 
+static BasicBlock *makeGotoEdge(BasicBlock *Source,
+                                std::optional<size_t> SuccessorIndex,
+                                BasicBlock *Target) {
+
+  Function *F = Source->getParent();
+
+  // Create the `goto` block, and connect it with the `Target`
+  LLVMContext &Context = getContext(Source);
+  BasicBlock *GotoBlock = BasicBlock::Create(Context,
+                                             "goto_" + Target->getName().str(),
+                                             F);
+  IRBuilder<> Builder(Context);
+  Builder.SetInsertPoint(GotoBlock);
+  Builder.CreateBr(Target);
+
+  // Insert the `goto_block` marker in the `ScopeGraph`
+  ScopeGraphBuilder SGBuilder(F);
+  SGBuilder.makeGoto(GotoBlock);
+
+  // Redirect the `Source` -> `Target` to `Source` -> `GotoBlock`
+  auto SourceTerminator = Source->getTerminator();
+
+  // We use this helper function both to substitute a specific edge connecting
+  // `Source` and `Target` (in case of multiple edges between the same pair of
+  // nodes), and all the edges connecting `Source` and `Target`. We use the
+  // `SuccessorIndex` parameter in order to distinguish between the two
+  // situations
+  if (SuccessorIndex) {
+    SourceTerminator->setSuccessor(*SuccessorIndex, GotoBlock);
+  } else {
+    SourceTerminator->replaceSuccessorWith(Target, GotoBlock);
+  }
+
+  return GotoBlock;
+}
+
 class DecideWithGotosPassImpl {
   Function &F;
 
@@ -89,25 +125,7 @@ public:
           // need to transform its edge into a `goto`
           AlreadyConnectedSuccessors.insert(Successor);
         } else {
-
-          auto ConditionalTerminator = PONode->getTerminator();
-          LLVMContext &Context = getContext(&F);
-          BasicBlock *
-            GotoBlock = BasicBlock::Create(Context,
-                                           "goto_" + Successor->getName().str(),
-                                           &F);
-
-          // Connect the `goto` block with the conditional
-          IRBuilder<> Builder(Context);
-          Builder.SetInsertPoint(GotoBlock);
-          Builder.CreateBr(Successor);
-
-          // Insert the `goto_block` marker in the `ScopeGraph`
-          ScopeGraphBuilder SGBuilder(&F);
-          SGBuilder.makeGoto(GotoBlock);
-
-          // Redirect the edge
-          ConditionalTerminator->setSuccessor(Index, GotoBlock);
+          makeGotoEdge(PONode, Index, Successor);
         }
 
         Index++;
@@ -200,27 +218,7 @@ public:
           for (BasicBlock *Predecessor : predecessors(Candidate)) {
             for (BasicBlock *PONodeSuccessor : skip_front(PONodeSuccessors)) {
               if (isReachableOnScopeGraph(PONodeSuccessor, Predecessor)) {
-
-                auto *PredecessorTerminator = Predecessor->getTerminator();
-                LLVMContext &Context = getContext(&F);
-                BasicBlock *
-                  GotoBlock = BasicBlock::Create(Context,
-                                                 "goto_"
-                                                   + Candidate->getName().str(),
-                                                 &F);
-
-                // Connect the `goto` block with the original target
-                IRBuilder<> Builder(Context);
-                Builder.SetInsertPoint(GotoBlock);
-                Builder.CreateBr(Candidate);
-
-                // Insert the `goto_block` marker in the `ScopeGraph`
-                ScopeGraphBuilder SGBuilder(&F);
-                SGBuilder.makeGoto(GotoBlock);
-
-                // Redirect the edge
-                PredecessorTerminator->replaceSuccessorWith(Candidate,
-                                                            GotoBlock);
+                makeGotoEdge(Predecessor, std::nullopt, Candidate);
               }
             }
           }
