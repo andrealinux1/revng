@@ -24,19 +24,6 @@ using namespace llvm;
 // Debug logger
 Logger<> DecideWithGotosPassLogger("decide-with-gotos");
 
-static bool isReachableOnScopeGraph(BasicBlock *Start, BasicBlock *End) {
-  for (BasicBlock *N : llvm::depth_first(Scope<BasicBlock *>(Start))) {
-    if (N == End) {
-
-      // As soon as I reach the node I'm looking for, I can early return
-      return true;
-    }
-  }
-
-  // If we didn't reach `End`, we deduce we cannot reach it
-  return false;
-}
-
 static BasicBlock *makeGotoEdge(BasicBlock *Source,
                                 std::optional<size_t> SuccessorIndex,
                                 BasicBlock *Target) {
@@ -188,35 +175,90 @@ public:
         revng_log(DecideWithGotosPassLogger, "  " << DFSNode->getName().str());
       }
 
-      // Process each node
+      // Initialize the `ReachabilityMap`
+      std::map<BasicBlock *, size_t> ReachabilityMap;
+
+      size_t Index = 0;
+      for (BasicBlock *ConditionalSuccessor :
+           llvm::children<Scope<BasicBlock *>>(PONode)) {
+
+        // Due to the preprocessing that we performed at the beginning, we
+        // should never have two edges connecting the same successor of a
+        // conditional.
+        revng_assert(ReachabilityMap.count(ConditionalSuccessor) == 0);
+
+        // We initialize the `ReachabilityMap` for each `ConditionalSuccessor`
+        ReachabilityMap[ConditionalSuccessor] = Index;
+        Index++;
+      }
+
+      // Process each node in the zone of interest
       for (BasicBlock *Candidate : NodesToProcess) {
-        llvm::SmallVector<BasicBlock *> PONodeSuccessors;
-        for (auto *Successor : llvm::children<Scope<BasicBlock *>>(PONode)) {
-          PONodeSuccessors.push_back(Successor);
+        revng_log(DecideWithGotosPassLogger,
+                  "Analyzing candidate: " + Candidate->getName().str() << "\n");
+        llvm::SmallVector<BasicBlock *> Predecessors;
+
+        // We precompute the predecessors to avoid invalidation due to graph
+        // changes. It is fundamental that we always traverse the `ScopeGraph`
+        // view of the CFG, or we may end up with some inconsistencies in terms
+        // of the visited nodes.
+        revng_log(DecideWithGotosPassLogger,
+                  "The candidate predecessors are:\n");
+
+        for (auto *Predecessor :
+             llvm::children<Inverse<Scope<BasicBlock *>>>(Candidate)) {
+          revng_log(DecideWithGotosPassLogger,
+                    "  Predecessor: " + Predecessor->getName().str());
+          Predecessors.push_back(Predecessor);
         }
 
-        // Process `Candidate` to understand if it is undecided wrt. to `PONode`
-        size_t Counter = 0;
-        llvm::SmallVector<BasicBlock *> ReachingSuccessors;
-        for (BasicBlock *PONodeSuccessor : PONodeSuccessors) {
-          if (isReachableOnScopeGraph(PONodeSuccessor, Candidate)) {
-            ReachingSuccessors.push_back(PONodeSuccessor);
-          }
-        }
+        // `Candidate`, could be itself a immediate successor of a conditional
+        // node, and therefore correspond to a `ScopeID`. We therefore need to
+        // take into consideration it when assigning the final scope for each
+        // `Candidate`.
+        // We can do this by always enqueuing `Candidate` as a
+        // predecessor of itself, this can lead to two situations:
+        // 1) `Candidate` is not a successor of the conditional, therefore no
+        //    corresponding entry in `ReachabilityMap` will be present, and this
+        //    will not influence the decision on the `ScopeID` which will be
+        //    finally assigned.
+        // 2) `Candidate` is a successor of the conditional, therefore a
+        //    corresponding entry in `ReachabilityMap` will be present, and it
+        //    will be correctly taken into account for the `ScopeID` decision
+        //    process.
+        Predecessors.push_back(Candidate);
 
-        if (ReachingSuccessors.size() > 1) {
+        // TODO: we elect the first `ScopeID` that we encounter as the elected
+        //       `ScopeID`. We may employ a more optimized strategy here.
+        std::optional<size_t> ElectedScopeID;
 
-          // It means that a `goto` is needed
-          // TODO: here we select the first `PONode` successor as the one non
-          //       transformed into `goto`
-          for (BasicBlock *Predecessor : predecessors(Candidate)) {
-            for (BasicBlock *PONodeSuccessor : skip_front(PONodeSuccessors)) {
-              if (isReachableOnScopeGraph(PONodeSuccessor, Predecessor)) {
-                makeGotoEdge(Predecessor, std::nullopt, Candidate);
-              }
+        for (auto *Predecessor : llvm::reverse(Predecessors)) {
+          auto ReachabilityMapIt = ReachabilityMap.find(Predecessor);
+
+          // We may have two situations: 1) There is an entry for `Predecessor`
+          // in the `ReachabilityMap`, it means that there is a path connecting
+          // the `PONode` conditional and `Candidate`. 2) There is no entry for
+          // `Predecessor`, therefore such node wasn't visited during the
+          // current exploration of the zone of interest, and therefore it does
+          // not lie on any path between the `PONode` conditional and the
+          // `Candidate` node.
+          if (ReachabilityMapIt != ReachabilityMap.end()) {
+            size_t PredecessorScopeID = ReachabilityMapIt->second;
+
+            // If we did not yet elect a `ScopeID`, we elect the current one.
+            // Otherwise, we need to transform this edge into a `goto` edge
+            if (not ElectedScopeID) {
+              ElectedScopeID = PredecessorScopeID;
+            } else {
+              makeGotoEdge(Predecessor, std::nullopt, Candidate);
             }
           }
         }
+
+        // We insert in the `ReachabilityMap` a new entry once we assigned the
+        // final `ScopeID` to `Candidate`, reflecting the final `ScopeID` that
+        // we elected in the above process
+        ReachabilityMap[Candidate] = *ElectedScopeID;
       }
     }
 
