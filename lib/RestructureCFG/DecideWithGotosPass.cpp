@@ -68,10 +68,6 @@ public:
 
 public:
   bool run() {
-
-    // We keep a boolean variable to track whether the `Module` was modified.
-    // TODO: assign the initializer to `false`, and reassign it when the first
-    //       change is made.
     bool ModuleModified = true;
 
     Function *PF = &F;
@@ -114,6 +110,9 @@ public:
           AlreadyConnectedSuccessors.insert(Successor);
         } else {
           makeGotoEdge(PONode, Index, Successor);
+
+          // We mark the CFG as modified
+          ModuleModified = true;
         }
 
         Index++;
@@ -121,15 +120,7 @@ public:
     }
 
     // We iterate over the conditional nodes in the `ScopeGraph` in post order
-    // TODO: verify that processing the conditional nodes in post order is the
-    //       legit thing to do
     for (BasicBlock *PONode : llvm::post_order(ScopeGraph)) {
-
-      // TODO: Do we need to take into account the edges on the `ScopeGraph` for
-      //       electing the conditional nodes? `goto` edges should not be taken
-      //       into account, but what about `scope-closer` edges? Do they count
-      //       toward making a node a conditional node? I would say yes but real
-      //       motivation?
       auto Successors = llvm::children<Scope<BasicBlock *>>(PONode);
       size_t NumSuccessors = std::distance(Successors.begin(),
                                            Successors.end());
@@ -251,6 +242,9 @@ public:
               ElectedScopeID = PredecessorScopeID;
             } else {
               makeGotoEdge(Predecessor, std::nullopt, Candidate);
+
+              // We mark the CFG as modified
+              ModuleModified = true;
             }
           }
         }
@@ -267,9 +261,6 @@ public:
 };
 
 char DecideWithGotosPass::ID = 0;
-
-// TODO: review the decision about shortening this flag for a better commandline
-//       experience
 static constexpr const char *Flag = "decide-with-gotos";
 using Reg = llvm::RegisterPass<DecideWithGotosPass>;
 static Reg X(Flag, "Perform the DecideWithGotos pass on the ScopeGraph");
