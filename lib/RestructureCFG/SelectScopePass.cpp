@@ -9,6 +9,7 @@
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/GenericDomTree.h"
 
 #include "revng/ADT/ReversePostOrderTraversal.h"
@@ -100,7 +101,8 @@ public:
 
       llvm::SmallPtrSet<const BasicBlock *, 2> AlreadyConnectedSuccessors;
 
-      // TODO: llvm::enumerate creates a problem with `const`ness
+      // TODO: `llvm::enumerate` creates a problem with `const`ness and
+      //       temporary assignment
       size_t Index = 0;
       for (BasicBlock *Successor : Successors) {
         if (not AlreadyConnectedSuccessors.contains(Successor)) {
@@ -206,8 +208,8 @@ public:
         // node, and therefore correspond to a `ScopeID`. We therefore need to
         // take into consideration it when assigning the final scope for each
         // `Candidate`.
-        // We can do this by always enqueuing `Candidate` as a
-        // predecessor of itself, this can lead to two situations:
+        // We can do this by always enqueuing `Candidate` as a predecessor of
+        // itself, this can lead to two situations:
         // 1) `Candidate` is not a successor of the conditional, therefore no
         //    corresponding entry in `ReachabilityMap` will be present, and this
         //    will not influence the decision on the `ScopeID` which will be
@@ -216,6 +218,13 @@ public:
         //    corresponding entry in `ReachabilityMap` will be present, and it
         //    will be correctly taken into account for the `ScopeID` decision
         //    process.
+        // Alternatively, we could pre-assign the `ScopeID`, in the
+        // `ReachabilityMap`, for each successor of a conditional node during
+        // the initialization. This, however, would tie us to the decision of
+        // always assigning the successor of a conditional node to the `ScopeID`
+        // opening in the successor itself, while, in principle, we could
+        // alternatively disconnect the edge connecting the conditional and the
+        // successor, by making it a `goto` edge.
         Predecessors.push_back(Candidate);
 
         // TODO: we elect the first `ScopeID` that we encounter as the elected
