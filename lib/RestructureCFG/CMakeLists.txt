@@ -14,7 +14,6 @@ revng_add_analyses_library_internal(
   BasicBlockNode.cpp
   BeautifyGHAST.cpp
   DAGifyPass.cpp
-  DecideWithGotosPass.cpp
   EnforceSingleExitPass.cpp
   ExprNode.cpp
   FallThroughScopeAnalysis.cpp
@@ -26,6 +25,7 @@ revng_add_analyses_library_internal(
   RegionCFGTree.cpp
   RemoveDeadCode.cpp
   RestructureCFG.cpp
+  SelectScopePass.cpp
   SimplifyCompareNode.cpp
   SimplifyDualSwitch.cpp
   SimplifyHybridNot.cpp

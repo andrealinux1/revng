@@ -12,9 +12,9 @@
 #include "llvm/Support/GenericDomTree.h"
 
 #include "revng/ADT/ReversePostOrderTraversal.h"
-#include "revng/RestructureCFG/DecideWithGotosPass.h"
 #include "revng/RestructureCFG/ScopeGraphGraphTraits.h"
 #include "revng/RestructureCFG/ScopeGraphUtils.h"
+#include "revng/RestructureCFG/SelectScopePass.h"
 #include "revng/Support/Debug.h"
 #include "revng/Support/GraphAlgorithms.h"
 #include "revng/Support/IRHelpers.h"
@@ -22,7 +22,7 @@
 using namespace llvm;
 
 // Debug logger
-Logger<> DecideWithGotosPassLogger("decide-with-gotos");
+Logger<> SelectScopePassLogger("select-scope");
 
 static BasicBlock *makeGotoEdge(BasicBlock *Source,
                                 std::optional<size_t> SuccessorIndex,
@@ -60,11 +60,11 @@ static BasicBlock *makeGotoEdge(BasicBlock *Source,
   return GotoBlock;
 }
 
-class DecideWithGotosPassImpl {
+class SelectScopePassImpl {
   Function &F;
 
 public:
-  DecideWithGotosPassImpl(Function &F) : F(F) {}
+  SelectScopePassImpl(Function &F) : F(F) {}
 
 public:
   bool run() {
@@ -129,13 +129,13 @@ public:
         continue;
       }
 
-      revng_log(DecideWithGotosPassLogger,
+      revng_log(SelectScopePassLogger,
                 "Processing conditional " << PONode->getName().str() << "\n");
 
       BasicBlock *PostDominator = PDT[PONode]->getIDom()->getBlock();
       revng_assert(PostDominator);
 
-      revng_log(DecideWithGotosPassLogger,
+      revng_log(SelectScopePassLogger,
                 "The identified postdominator is "
                   << PostDominator->getName().str() << "\n");
 
@@ -159,11 +159,11 @@ public:
       revng_assert(NodesToProcess.front() == PONode);
       NodesToProcess.erase(NodesToProcess.begin());
 
-      revng_log(DecideWithGotosPassLogger,
+      revng_log(SelectScopePassLogger,
                 "Nodes between conditional and its postdominator, in reverse "
                 "post order:\n");
       for (auto DFSNode : NodesToProcess) {
-        revng_log(DecideWithGotosPassLogger, "  " << DFSNode->getName().str());
+        revng_log(SelectScopePassLogger, "  " << DFSNode->getName().str());
       }
 
       // Initialize the `ReachabilityMap`
@@ -185,7 +185,7 @@ public:
 
       // Process each node in the zone of interest
       for (BasicBlock *Candidate : NodesToProcess) {
-        revng_log(DecideWithGotosPassLogger,
+        revng_log(SelectScopePassLogger,
                   "Analyzing candidate: " + Candidate->getName().str() << "\n");
         llvm::SmallVector<BasicBlock *> Predecessors;
 
@@ -193,12 +193,11 @@ public:
         // changes. It is fundamental that we always traverse the `ScopeGraph`
         // view of the CFG, or we may end up with some inconsistencies in terms
         // of the visited nodes.
-        revng_log(DecideWithGotosPassLogger,
-                  "The candidate predecessors are:\n");
+        revng_log(SelectScopePassLogger, "The candidate predecessors are:\n");
 
         for (auto *Predecessor :
              llvm::children<Inverse<Scope<BasicBlock *>>>(Candidate)) {
-          revng_log(DecideWithGotosPassLogger,
+          revng_log(SelectScopePassLogger,
                     "  Predecessor: " + Predecessor->getName().str());
           Predecessors.push_back(Predecessor);
         }
@@ -220,9 +219,16 @@ public:
         Predecessors.push_back(Candidate);
 
         // TODO: we elect the first `ScopeID` that we encounter as the elected
-        //       `ScopeID`. We may employ a more optimized strategy here.
+        //       `ScopeID`. We may employ a more complex strategy here.
         std::optional<size_t> ElectedScopeID;
 
+        // We process the collected predecessors in reverse order wrt. the order
+        // in which they are contained in the `Predecessors` vector. This is
+        // important in order to prefer selecting as the elected `ScopeID` the
+        // "leftmost" (on a graph visualization) `ScopeID` (and if present, the
+        // `ScopeID` corresponding to the `Candidate` node itself, assuming it
+        // is a successor of the conditional, MUST be the first processed
+        // `ScopeID`, and the elected one).
         for (auto *Predecessor : llvm::reverse(Predecessors)) {
           auto ReachabilityMapIt = ReachabilityMap.find(Predecessor);
 
@@ -242,6 +248,9 @@ public:
               ElectedScopeID = PredecessorScopeID;
             } else {
               makeGotoEdge(Predecessor, std::nullopt, Candidate);
+              revng_log(SelectScopePassLogger,
+                        "Removing predecessor: "
+                          + Predecessor->getName().str());
 
               // We mark the CFG as modified
               ModuleModified = true;
@@ -260,16 +269,16 @@ public:
   }
 };
 
-char DecideWithGotosPass::ID = 0;
-static constexpr const char *Flag = "decide-with-gotos";
-using Reg = llvm::RegisterPass<DecideWithGotosPass>;
-static Reg X(Flag, "Perform the DecideWithGotos pass on the ScopeGraph");
+char SelectScopePass::ID = 0;
+static constexpr const char *Flag = "select-scope";
+using Reg = llvm::RegisterPass<SelectScopePass>;
+static Reg X(Flag, "Perform the SelectScope pass on the ScopeGraph");
 
-bool DecideWithGotosPass::runOnFunction(llvm::Function &F) {
+bool SelectScopePass::runOnFunction(llvm::Function &F) {
 
   // Instantiate and call the `Impl` class
-  DecideWithGotosPassImpl DecideWithGotosImpl(F);
-  bool FunctionChanged = DecideWithGotosImpl.run();
+  SelectScopePassImpl SelectScopeImpl(F);
+  bool FunctionChanged = SelectScopeImpl.run();
 
   // This pass may transform the CFG by adding some edge into `goto` edges,
   // therefore creating some additional `goto_block`s. We propagate the
@@ -277,6 +286,6 @@ bool DecideWithGotosPass::runOnFunction(llvm::Function &F) {
   return FunctionChanged;
 }
 
-void DecideWithGotosPass::getAnalysisUsage(llvm::AnalysisUsage &AU) const {
+void SelectScopePass::getAnalysisUsage(llvm::AnalysisUsage &AU) const {
   // This pass does not preserve the CFG
 }

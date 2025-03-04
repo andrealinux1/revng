@@ -7,12 +7,12 @@
 #include "llvm/IR/Function.h"
 #include "llvm/Pass.h"
 
-class DecideWithGotosPass : public llvm::FunctionPass {
+class SelectScopePass : public llvm::FunctionPass {
 public:
   static char ID;
 
 public:
-  DecideWithGotosPass() : llvm::FunctionPass(ID) {}
+  SelectScopePass() : llvm::FunctionPass(ID) {}
 
   bool runOnFunction(llvm::Function &F) override;
 
