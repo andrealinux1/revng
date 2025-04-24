@@ -11,12 +11,10 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/GenericDomTree.h"
 
+#include "revng/RestructureCFG/GenericRegionInfo.h"
 #include "revng/RestructureCFG/MaterializeLoopScopes.h"
 #include "revng/RestructureCFG/ScopeGraphGraphTraits.h"
-#include "revng/RestructureCFG/ScopeGraphUtils.h"
 #include "revng/Support/Assert.h"
-#include "revng/Support/GraphAlgorithms.h"
-#include "revng/Support/IRHelpers.h"
 
 using namespace llvm;
 
@@ -34,7 +32,14 @@ public:
     // We keep a boolean variable to track whether the `Function` was modified
     bool FunctionModified = false;
 
-    dbg << &F << "\n";
+    // Build the `ScopeGraph` on which `GenericRegionInfo` analysis should be
+    // run
+    Scope<Function *> ScopeGraph(&F);
+
+    // Build and run the `GenericRegionInfo` analysis on the `ScopeGraph`
+    GenericRegionInfo<Scope<Function *>> RegionInfo;
+    RegionInfo.clear();
+    RegionInfo.compute(ScopeGraph);
 
     return FunctionModified;
   }
