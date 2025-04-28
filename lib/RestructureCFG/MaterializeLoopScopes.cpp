@@ -13,6 +13,7 @@
 
 #include "revng/RestructureCFG/GenericRegionInfo.h"
 #include "revng/RestructureCFG/MaterializeLoopScopes.h"
+#include "revng/RestructureCFG/ScopeGraphAlgorithms.h"
 #include "revng/RestructureCFG/ScopeGraphGraphTraits.h"
 #include "revng/Support/Assert.h"
 
@@ -40,6 +41,42 @@ public:
     GenericRegionInfo<Scope<Function *>> RegionInfo;
     RegionInfo.clear();
     RegionInfo.compute(ScopeGraph);
+
+    // We iterate over all the `GenericRegion`s that were found
+    for (auto &TopLevelRegion : RegionInfo.top_level_regions()) {
+      for (auto *Region : post_order(&TopLevelRegion)) {
+
+        // We create a `SmallSet` for quickly checking if a `Predecessor` is
+        // part of the `GenericRegion`
+        SmallPtrSet<BasicBlock *, 4> RegionNodes;
+        for (auto *RegionNode : Region->blocks()) {
+          RegionNodes.insert(RegionNode);
+        }
+
+        // Retrieve the elected `Head` of the `GenericRegion`
+        BasicBlock *Head = Region->getHead();
+        dbg << "Elected head is: ";
+        dbg << Head->getName().str() << "\n";
+
+        // We want to transform each abnormal entry in a SCS into a `goto` edge
+        for (auto *RegionNode : Region->blocks()) {
+
+          // We need to skip elect entry node
+          if (RegionNode != Head) {
+
+            // Iterate over the predecessors of each block, and transform in a
+            // `goto` edge each abnormal entry
+            SmallSetVector<BasicBlock *, 2>
+              Predecessors = getScopeGraphPredecessors(RegionNode);
+            for (BasicBlock *Predecessor : Predecessors) {
+              if (not RegionNodes.contains(Predecessor)) {
+                SGBuilder.makeGotoEdge(Predecessor, RegionNode);
+              }
+            }
+          }
+        }
+      }
+    }
 
     return FunctionModified;
   }
