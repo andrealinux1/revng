@@ -12,6 +12,7 @@
 #include "llvm/Support/GenericDomTree.h"
 
 #include "revng/ADT/Concepts.h"
+#include "revng/RestructureCFG/GenericRegionPass.h"
 #include "revng/RestructureCFG/InlineDivergentScopesPass.h"
 #include "revng/RestructureCFG/ScopeGraphAlgorithms.h"
 #include "revng/RestructureCFG/ScopeGraphGraphTraits.h"
@@ -683,4 +684,8 @@ bool InlineDivergentScopesPass::runOnFunction(llvm::Function &F) {
 void InlineDivergentScopesPass::getAnalysisUsage(llvm::AnalysisUsage &AU)
   const {
   // This pass does not preserve the CFG
+
+  // We artificially impose that this pass does not modify the results of
+  // `GenericRegionPass`
+  AU.addPreserved<GenericRegionPass>();
 }
