@@ -12,6 +12,7 @@
 #include "llvm/Support/GenericDomTree.h"
 
 #include "revng/RestructureCFG/GenericRegionInfo.h"
+#include "revng/RestructureCFG/GenericRegionPass.h"
 #include "revng/RestructureCFG/MaterializeLoopScopes.h"
 #include "revng/RestructureCFG/ScopeGraphAlgorithms.h"
 #include "revng/RestructureCFG/ScopeGraphGraphTraits.h"
@@ -21,26 +22,16 @@ using namespace llvm;
 
 /// Implementation class used to run the `MaterializeLoopScopes` transformation
 class MaterializeLoopScopesImpl {
-  Function &F;
   ScopeGraphBuilder SGBuilder;
 
 public:
-  MaterializeLoopScopesImpl(Function &F) : F(F), SGBuilder(&F) {}
+  MaterializeLoopScopesImpl(Function &F) : SGBuilder(&F) {}
 
 public:
-  bool run() {
+  bool run(const GenericRegionInfo<Scope<Function *>> &RegionInfo) {
 
     // We keep a boolean variable to track whether the `Function` was modified
     bool FunctionModified = false;
-
-    // Build the `ScopeGraph` on which `GenericRegionInfo` analysis should be
-    // run
-    Scope<Function *> ScopeGraph(&F);
-
-    // Build and run the `GenericRegionInfo` analysis on the `ScopeGraph`
-    GenericRegionInfo<Scope<Function *>> RegionInfo;
-    RegionInfo.clear();
-    RegionInfo.compute(ScopeGraph);
 
     // We iterate over all the `GenericRegion`s that were found
     for (auto &TopLevelRegion : RegionInfo.top_level_regions()) {
@@ -52,6 +43,9 @@ public:
         for (auto *RegionNode : Region->blocks()) {
           RegionNodes.insert(RegionNode);
         }
+
+        // 1: In this first step, we handle abnormal entries into each
+        //    `GenericRegion`
 
         // Retrieve the elected `Head` of the `GenericRegion`
         BasicBlock *Head = Region->getHead();
@@ -75,6 +69,8 @@ public:
             }
           }
         }
+
+        // 2: TODO: handle the exits of each `GenericRegion`
       }
     }
 
@@ -89,9 +85,12 @@ static Reg X(Flag, "Perform the materialization of loop scopes transformation");
 
 bool MaterializeLoopScopes::runOnFunction(llvm::Function &F) {
 
+  // Retrieve the `GenericRegionInfo`
+  auto &RegionInfo = getAnalysis<GenericRegionPass>().getResult();
+
   // Instantiate and call the `Impl` class
   MaterializeLoopScopesImpl IDSImpl(F);
-  bool FunctionModified = IDSImpl.run();
+  bool FunctionModified = IDSImpl.run(RegionInfo);
 
   // This pass may transform the CFG by transforming some edges into `goto`
   // edges, and by adding some `scope_closer` edges on the `ScopeGraph`
@@ -100,4 +99,8 @@ bool MaterializeLoopScopes::runOnFunction(llvm::Function &F) {
 
 void MaterializeLoopScopes::getAnalysisUsage(llvm::AnalysisUsage &AU) const {
   // This pass does not preserve the CFG
+
+  // This transformation pass consumes the results provided by
+  // `GenericRegionPass`
+  AU.addRequired<GenericRegionPass>();
 }
