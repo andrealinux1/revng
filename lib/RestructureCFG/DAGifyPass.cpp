@@ -8,6 +8,7 @@
 
 #include "revng/RestructureCFG/DAGifyPass.h"
 #include "revng/RestructureCFG/GenericRegionInfo.h"
+#include "revng/RestructureCFG/GenericRegionPass.h"
 #include "revng/RestructureCFG/ScopeGraphGraphTraits.h"
 #include "revng/RestructureCFG/ScopeGraphUtils.h"
 #include "revng/Support/Assert.h"
@@ -59,16 +60,7 @@ public:
     SGBuilder.makeGotoEdge(Source, Target);
   }
 
-  bool run() {
-
-    // Build the `ScopeGraph` on which the `GenericRegionInfo` analysis should
-    // be run
-    Scope<Function *> ScopeGraph(&F);
-
-    // Build and run the `GenericRegionInfo` analysis on the `ScopeGraph`
-    GenericRegionInfo<Scope<Function *>> RegionInfo;
-    RegionInfo.clear();
-    RegionInfo.compute(ScopeGraph);
+  bool run(const GenericRegionInfo<Scope<Function *>> &RegionInfo) {
 
     // We keep a boolean variable to track whether the `Function` was modified
     bool FunctionModified = false;
@@ -126,6 +118,7 @@ public:
     // Verify that the output `ScopeGraph` is acyclic, after `DAGify` has
     // processed the input, but only when the `VerifyLog` is enabled
     if (VerifyLog.isEnabled()) {
+      Scope<Function *> ScopeGraph(&F);
       revng_assert(isDAG(ScopeGraph));
     }
 
@@ -143,9 +136,11 @@ bool DAGifyPass::runOnFunction(llvm::Function &F) {
   revng_log(DAGifyPassLogger,
             "Running DAGify on function " << F.getName().str() << "\n");
 
+  auto &RegionInfo = getAnalysis<GenericRegionPass>().getResult();
+
   // Instantiate and call the `Impl` class
   DAGifyPassImpl DAGifyImpl(F);
-  bool FunctionChanged = DAGifyImpl.run();
+  bool FunctionChanged = DAGifyImpl.run(RegionInfo);
 
   // This pass may transform the CFG by transforming some edges into `goto`
   // edges on the `ScopeGraph`. We propagate the information computed by the
@@ -155,4 +150,12 @@ bool DAGifyPass::runOnFunction(llvm::Function &F) {
 
 void DAGifyPass::getAnalysisUsage(llvm::AnalysisUsage &AU) const {
   // This pass does not preserve the CFG
+
+  // This transformation pass consumes the results provided by
+  // `GenericRegionPass`
+  AU.addRequired<GenericRegionPass>();
+
+  // We artificially impose that this pass does not modify the results of
+  // `GenericRegionPass`
+  AU.addPreserved<GenericRegionPass>();
 }
