@@ -20,6 +20,9 @@
 
 using namespace llvm;
 
+// Debug logger
+static Logger<> Log("materialize-loop-scopes");
+
 /// Implementation class used to run the `MaterializeLoopScopes` transformation
 class MaterializeLoopScopesImpl {
   ScopeGraphBuilder SGBuilder;
@@ -46,11 +49,11 @@ public:
 
         // 1: In this first step, we handle abnormal entries into each
         //    `GenericRegion`
+        revng_log(Log, "Performing late entry normalization\n");
 
         // Retrieve the elected `Head` of the `GenericRegion`
         BasicBlock *Head = Region->getHead();
-        dbg << "Elected head is: ";
-        dbg << Head->getName().str() << "\n";
+        revng_log(Log, "Elected head is: " << Head->getName() << "\n");
 
         // We want to transform each abnormal entry in a SCS into a `goto` edge
         for (auto *RegionNode : Region->blocks()) {
@@ -64,6 +67,11 @@ public:
               Predecessors = getScopeGraphPredecessors(RegionNode);
             for (BasicBlock *Predecessor : Predecessors) {
               if (not RegionNodes.contains(Predecessor)) {
+                revng_log(Log,
+                          "Transforming late entry edge into a goto edge: "
+                            << Predecessor->getName() << " -> "
+                            << RegionNode->getName() << "\n");
+
                 SGBuilder.makeGotoEdge(Predecessor, RegionNode);
               }
             }
