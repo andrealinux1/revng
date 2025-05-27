@@ -25,10 +25,11 @@ static Logger<> Log("materialize-loop-scopes");
 
 /// Implementation class used to run the `MaterializeLoopScopes` transformation
 class MaterializeLoopScopesImpl {
+  Function &F;
   ScopeGraphBuilder SGBuilder;
 
 public:
-  MaterializeLoopScopesImpl(Function &F) : SGBuilder(&F) {}
+  MaterializeLoopScopesImpl(Function &F) : F(F), SGBuilder(&F) {}
 
 public:
   bool run(const GenericRegionInfo<Scope<Function *>> &RegionInfo) {
