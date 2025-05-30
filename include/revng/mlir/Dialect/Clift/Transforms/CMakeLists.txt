@@ -1,3 +1,8 @@
+set(LLVM_TARGET_DEFINITIONS Beautify/Expressions.td)
+mlir_tablegen(Beautify/Expressions.h.inc -gen-rewriters)
+add_public_tablegen_target(MLIRCliftBeautifyExpressionRewriteIncGen)
+add_dependencies(mlir-headers MLIRCliftBeautifyExpressionRewriteIncGen)
+
 set(LLVM_TARGET_DEFINITIONS Passes.td)
 mlir_tablegen(Passes.h.inc -gen-pass-decls -name Clift)
 add_public_tablegen_target(MLIRCliftPassIncGen)
