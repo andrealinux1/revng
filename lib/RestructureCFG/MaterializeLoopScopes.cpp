@@ -23,6 +23,23 @@ using namespace llvm;
 // Debug logger
 static Logger<> Log("materialize-loop-scopes");
 
+/// Helper to obtain the immediate postdominator `BasicBlock`, if present
+static BasicBlock *
+getImmediatePostDominator(BasicBlock *N,
+                          PostDomTreeOnView<BasicBlock, Scope> &PostDomTree) {
+  auto *Node = PostDomTree.getNode(N)->getIDom();
+  if (Node) {
+    return Node->getBlock();
+  } else {
+    return nullptr;
+  }
+}
+
+// TODO: Verify if we need to run IDS between DAGify and this MLoopScopes pass,
+//       or if we can avoid it. If we can avoid, we are happy, because we do not
+//       have to deal with keeping the `GenericRegionInfo` information updated
+//       across passes that add and delete nodes.
+
 /// Implementation class used to run the `MaterializeLoopScopes` transformation
 class MaterializeLoopScopesImpl {
   Function &F;
@@ -79,7 +96,58 @@ public:
           }
         }
 
+        dbg << "After late entry normalization:\n";
+        llvm::WriteGraph<Scope<llvm::Function *>>(&F,
+                                                  "ScopeGraph-" + F.getName());
+
         // 2: TODO: handle the exits of each `GenericRegion`
+        std::optional<BasicBlock *> UniqueSuccessor;
+
+        // TODO: implement the unique successor identification with an assertion
+        //       for the base case only (a specific and easily identifiable
+        //       successor)
+        for (auto *RegionNode : Region->blocks()) {
+          SmallSetVector<BasicBlock *, 2>
+            Successors = getScopeGraphSuccessors(RegionNode);
+          for (BasicBlock *Successor : Successors) {
+            if (not RegionNodes.contains(Successor)) {
+              revng_assert(not UniqueSuccessor);
+              UniqueSuccessor = Successor;
+            }
+          }
+        }
+
+        // TODO: consider pushing the instantiation of the `PostDominatorTree`
+        PostDomTreeOnView<BasicBlock, Scope> PostDomTree;
+        PostDomTree.recalculate(F);
+
+        // TODO: try and navigate up in the post dominator tree until we find a
+        //       node which is outside the current `GenericRegion`
+        BasicBlock *Candidate = Head;
+        while ((Candidate = getImmediatePostDominator(Candidate,
+                                                      PostDomTree))) {
+          if (not RegionNodes.contains(Candidate)) {
+
+            // Here we have identified the first node outside the
+            // `GenericRegion` which postdominates the entry node. This node
+            // will be our candidate for becoming the exit node of the
+            // `GenericRegion`.
+            UniqueSuccessor = Candidate;
+          }
+        }
+
+        // TODO: double check that the `UniqueSuccessor` should always exists.
+        //
+        revng_assert(UniqueSuccessor);
+
+        // Once we have identified the potential `UniqueSuccessor`, we add a
+        // `scope_closer` from the entry node of the `GenericRegion` to it
+        SGBuilder.addScopeCloser(Head, *UniqueSuccessor);
+
+        // Logging
+        revng_log(Log,
+                  "The elected unique successor is: "
+                    << (*UniqueSuccessor)->getName() << "\n");
       }
     }
 
