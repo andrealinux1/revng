@@ -41,6 +41,9 @@ Tag IsRef("is-ref");
 Tag ScopeCloserMarker("scope-closer");
 Tag GotoBlockMarker("goto-block");
 
+Tag GenericRegionID("generic-region-id");
+Tag GenericRegionIDHead("generic-region-id-header");
+
 FunctionPoolTag<TypePair>
   AddressOf("address-of",
             { llvm::Attribute::NoUnwind,

@@ -43,6 +43,8 @@ extern Tag ReturnsPolymorphic;
 extern Tag IsRef;
 extern Tag ScopeCloserMarker;
 extern Tag GotoBlockMarker;
+extern Tag GenericRegionID;
+extern Tag GenericRegionIDHead;
 
 /// This struct can be used as a key of an OpaqueFunctionsPool where both
 /// the return type and one of the arguments are needed to identify a function
