@@ -43,10 +43,10 @@ getImmediatePostDominator(BasicBlock *N,
 /// Implementation class used to run the `MaterializeLoopScopes` transformation
 class MaterializeLoopScopesImpl {
   Function &F;
-  ScopeGraphBuilder SGBuilder;
+  ScopeGraphManager SGManager;
 
 public:
-  MaterializeLoopScopesImpl(Function &F) : F(F), SGBuilder(&F) {}
+  MaterializeLoopScopesImpl(Function &F) : F(F), SGManager(&F) {}
 
 public:
   bool run(const GenericRegionInfo<Scope<Function *>> &RegionInfo) {
@@ -90,7 +90,7 @@ public:
                             << Predecessor->getName() << " -> "
                             << RegionNode->getName() << "\n");
 
-                SGBuilder.makeGotoEdge(Predecessor, RegionNode);
+                SGManager.makeGotoEdge(Predecessor, RegionNode);
               }
             }
           }
@@ -142,7 +142,7 @@ public:
 
         // Once we have identified the potential `UniqueSuccessor`, we add a
         // `scope_closer` from the entry node of the `GenericRegion` to it
-        SGBuilder.addScopeCloser(Head, *UniqueSuccessor);
+        SGManager.addScopeCloser(Head, *UniqueSuccessor);
 
         // Logging
         revng_log(Log,

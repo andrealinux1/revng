@@ -19,7 +19,7 @@ using namespace llvm;
 // Debug logger
 Logger<> MaterializeTrivialGotoLogger("materialize-trivial-goto");
 
-static void eraseGoto(ScopeGraphBuilder &SGBuilder, BasicBlock &BB) {
+static void eraseGoto(ScopeGraphManager &SGManager, BasicBlock &BB) {
 
   // If `BB` is a `GotoBlock`, it must have as terminator an unconditional
   // branch, which points to the `goto` target block.
@@ -28,10 +28,10 @@ static void eraseGoto(ScopeGraphBuilder &SGBuilder, BasicBlock &BB) {
   revng_assert(Branch->isUnconditional());
 
   // We erase the `goto_block` marker
-  SGBuilder.eraseGoto(&BB);
+  SGManager.eraseGoto(&BB);
 }
 
-static BasicBlock *eraseScopeCloser(ScopeGraphBuilder &SGBuilder,
+static BasicBlock *eraseScopeCloser(ScopeGraphManager &SGManager,
                                     BasicBlock &BB) {
 
   // If the `GotoBlock` also contains a `scope_closer` edge, we also need
@@ -39,29 +39,29 @@ static BasicBlock *eraseScopeCloser(ScopeGraphBuilder &SGBuilder,
   // transformation. We return it so that it can be later restored
   BasicBlock *ScopeCloserTarget = nullptr;
   if (isScopeCloserBlock(&BB)) {
-    ScopeCloserTarget = SGBuilder.eraseScopeCloser(&BB);
+    ScopeCloserTarget = SGManager.eraseScopeCloser(&BB);
   }
   return ScopeCloserTarget;
 }
 
-static void rollbackScopeGraph(ScopeGraphBuilder &SGBuilder,
+static void rollbackScopeGraph(ScopeGraphManager &SGManager,
                                BasicBlock &BB,
                                BasicBlock *ScopeCloserTarget) {
-  SGBuilder.makeGoto(&BB);
+  SGManager.makeGoto(&BB);
 
   // If there was also a `scope_closer` in addition to the `GotoBlock`, we need
   // to restore it too
   if (ScopeCloserTarget) {
-    SGBuilder.addScopeCloser(&BB, ScopeCloserTarget);
+    SGManager.addScopeCloser(&BB, ScopeCloserTarget);
   }
 }
 
 class MaterializeTrivialGotoPassImpl {
   Function &F;
-  ScopeGraphBuilder SGBuilder;
+  ScopeGraphManager SGManager;
 
 public:
-  MaterializeTrivialGotoPassImpl(Function &F) : F(F), SGBuilder(&F) {}
+  MaterializeTrivialGotoPassImpl(Function &F) : F(F), SGManager(&F) {}
 
 public:
   bool run() {
@@ -78,8 +78,8 @@ public:
 
         // We remove the `goto_block` marker (and the `scope_closer` if
         // present)
-        eraseGoto(SGBuilder, BB);
-        BasicBlock *ScopeCloserTarget = eraseScopeCloser(SGBuilder, BB);
+        eraseGoto(SGManager, BB);
+        BasicBlock *ScopeCloserTarget = eraseScopeCloser(SGManager, BB);
 
         // We rollback the changes if either:
         // 1) The obtained `ScopeGraph` becomes cyclic
@@ -88,7 +88,7 @@ public:
         if (not isDAG(ScopeGraph) or not isScopeGraphDecided(F)) {
 
           // We rollback to the original situation
-          rollbackScopeGraph(SGBuilder, BB, ScopeCloserTarget);
+          rollbackScopeGraph(SGManager, BB, ScopeCloserTarget);
         } else {
 
           // If we do not rollback, it means that the `TrivialGoto`

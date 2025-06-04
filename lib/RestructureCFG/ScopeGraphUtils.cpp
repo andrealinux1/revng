@@ -86,12 +86,12 @@ static Function *getOrCreateGotoBlockFunction(Module *M) {
   return Result;
 }
 
-ScopeGraphBuilder::ScopeGraphBuilder(Function *F) :
+ScopeGraphManager::ScopeGraphManager(Function *F) :
   ScopeCloserFunction(getOrCreateScopeCloserFunction(F->getParent())),
   GotoBlockFunction(getOrCreateGotoBlockFunction(F->getParent())) {
 }
 
-void ScopeGraphBuilder::makeGoto(BasicBlock *GotoBlock) const {
+void ScopeGraphManager::makeGoto(BasicBlock *GotoBlock) const {
   // We must have a `GotoBlock`
   revng_assert(GotoBlock);
 
@@ -106,7 +106,7 @@ void ScopeGraphBuilder::makeGoto(BasicBlock *GotoBlock) const {
   Builder.CreateCall(GotoBlockFunction, {});
 }
 
-void ScopeGraphBuilder::eraseGoto(BasicBlock *GotoBlock) const {
+void ScopeGraphManager::eraseGoto(BasicBlock *GotoBlock) const {
   // We must have a `GotoBlock`
   revng_assert(GotoBlock);
 
@@ -124,7 +124,7 @@ void ScopeGraphBuilder::eraseGoto(BasicBlock *GotoBlock) const {
   }
 }
 
-void ScopeGraphBuilder::addScopeCloser(BasicBlock *Source,
+void ScopeGraphManager::addScopeCloser(BasicBlock *Source,
                                        BasicBlock *Target) const {
   // We must have an insertion point
   revng_assert(Source);
@@ -138,7 +138,7 @@ void ScopeGraphBuilder::addScopeCloser(BasicBlock *Source,
   Builder.CreateCall(ScopeCloserFunction, BasicBlockAddressTarget);
 }
 
-BasicBlock *ScopeGraphBuilder::eraseScopeCloser(BasicBlock *Source) const {
+BasicBlock *ScopeGraphManager::eraseScopeCloser(BasicBlock *Source) const {
 
   // We save the `Target` of the `scope_closer`, which will be returned by the
   // method, for eventual later restoring
@@ -155,7 +155,7 @@ BasicBlock *ScopeGraphBuilder::eraseScopeCloser(BasicBlock *Source) const {
   return ScopeCloserTarget;
 }
 
-BasicBlock *ScopeGraphBuilder::makeGotoEdge(BasicBlock *Source,
+BasicBlock *ScopeGraphManager::makeGotoEdge(BasicBlock *Source,
                                             BasicBlock *Target) const {
   Function *F = Source->getParent();
 

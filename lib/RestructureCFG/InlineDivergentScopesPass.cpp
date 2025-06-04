@@ -343,7 +343,7 @@ static void createHead(BasicBlock *Conditional,
 
 /// Helper function that performs the IDS transformation
 static void
-performMultipleIDS(const ScopeGraphBuilder &SGBuilder,
+performMultipleIDS(const ScopeGraphManager &SGManager,
                    SmallVector<DivergenceDescriptor> &MultipleDivergences,
                    BasicBlock *PlaceHolderTarget) {
 
@@ -448,7 +448,7 @@ performMultipleIDS(const ScopeGraphBuilder &SGBuilder,
   // We add a `scope_closer` edge between the divergent exit node and
   // the `Tail` node for all the exits
   for (auto Divergence : MultipleDivergences) {
-    SGBuilder.addScopeCloser(Divergence.Exit, Tail);
+    SGManager.addScopeCloser(Divergence.Exit, Tail);
   }
 }
 
@@ -486,7 +486,7 @@ canAddDescriptor(const SmallVector<DivergenceDescriptor> &Collection,
 
 /// Helper function which attempts to perform multiple IDS transformations
 static bool
-tryMultipleIDS(const ScopeGraphBuilder &SGBuilder,
+tryMultipleIDS(const ScopeGraphManager &SGManager,
                SmallVector<DivergenceDescriptor> &DivergenceDescriptors,
                BasicBlock *PlaceHolderTarget) {
 
@@ -530,7 +530,7 @@ tryMultipleIDS(const ScopeGraphBuilder &SGBuilder,
     }
 
     if (CompatibleDivergenceDescriptors.size() >= 1) {
-      performMultipleIDS(SGBuilder,
+      performMultipleIDS(SGManager,
                          CompatibleDivergenceDescriptors,
                          PlaceHolderTarget);
 
@@ -548,7 +548,7 @@ tryMultipleIDS(const ScopeGraphBuilder &SGBuilder,
 
 /// This helper function is used to attempt the IDS process, and returns `true`
 /// or `false` depending on whether a change is performed
-static bool tryIDS(const ScopeGraphBuilder &SGBuilder,
+static bool tryIDS(const ScopeGraphManager &SGManager,
                    Function &F,
                    BasicBlock *PlaceHolderTarget) {
 
@@ -589,16 +589,16 @@ static bool tryIDS(const ScopeGraphBuilder &SGBuilder,
     }
   }
 
-  return tryMultipleIDS(SGBuilder, DivergenceDescriptors, PlaceHolderTarget);
+  return tryMultipleIDS(SGManager, DivergenceDescriptors, PlaceHolderTarget);
 }
 
 /// Implementation class used to run the `IDS` transformation
 class InlineDivergentScopesImpl {
   Function &F;
-  const ScopeGraphBuilder SGBuilder;
+  const ScopeGraphManager SGManager;
 
 public:
-  InlineDivergentScopesImpl(Function &F) : F(F), SGBuilder(&F) {}
+  InlineDivergentScopesImpl(Function &F) : F(F), SGManager(&F) {}
 
 public:
   bool run() {
@@ -617,7 +617,7 @@ public:
     // continuing with the processing of all the exits already collected.
     // Therefore, we should not really try to optimize this, unless we find new
     // evidence that this is better.
-    while (tryIDS(SGBuilder, F, *PlaceHolderTarget)) {
+    while (tryIDS(SGManager, F, *PlaceHolderTarget)) {
 
       // As soon as one IDS change is performed, we mark the current `Function`
       // as modified

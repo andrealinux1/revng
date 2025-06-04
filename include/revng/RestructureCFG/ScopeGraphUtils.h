@@ -32,13 +32,13 @@ getUniqueFunctionWithTag(FunctionTags::Tag &MarkerFunctionTag, ModuleType *M) {
 /// A class that wraps all the logic for injecting goto edges and scope closer
 /// edges on LLVM IR. Such edges are then necessary for the ScopeGraph view on
 /// LLVM IR
-class ScopeGraphBuilder {
+class ScopeGraphManager {
 private:
   llvm::Function *ScopeCloserFunction = nullptr;
   llvm::Function *GotoBlockFunction = nullptr;
 
 public:
-  ScopeGraphBuilder(llvm::Function *F);
+  ScopeGraphManager(llvm::Function *F);
 
 public:
   void makeGoto(llvm::BasicBlock *GotoBlock) const;

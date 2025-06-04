@@ -55,10 +55,10 @@ static bool isInfiniteLoop(const scc_iterator<Scope<BasicBlock *>> &SCCIt) {
 /// blocks, and infinite loops too.
 class EnforceSingleExitPassImpl {
   Function &F;
-  const ScopeGraphBuilder SGBuilder;
+  const ScopeGraphManager SGManager;
 
 public:
-  EnforceSingleExitPassImpl(Function &F) : F(F), SGBuilder(&F) {}
+  EnforceSingleExitPassImpl(Function &F) : F(F), SGManager(&F) {}
 
 public:
   bool run() {
@@ -158,7 +158,7 @@ public:
     if (TrivialExits.size() != 0) {
       for (BasicBlock *TrivialExit : skip_front(TrivialExits)) {
         revng_assert(TrivialExit != OneTrueExit);
-        SGBuilder.addScopeCloser(TrivialExit, OneTrueExit);
+        SGManager.addScopeCloser(TrivialExit, OneTrueExit);
       }
     }
 
@@ -167,7 +167,7 @@ public:
 
       // Build a `scope_closer` edge from each identified exit block to the
       // `sink_block`
-      SGBuilder.addScopeCloser(NonTrivialExit, OneTrueExit);
+      SGManager.addScopeCloser(NonTrivialExit, OneTrueExit);
     }
 
     // The function was modified

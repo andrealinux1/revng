@@ -23,10 +23,10 @@ Logger<> DAGifyPassLogger("dagify");
 
 class DAGifyPassImpl {
   Function &F;
-  const ScopeGraphBuilder SGBuilder;
+  const ScopeGraphManager SGManager;
 
 public:
-  DAGifyPassImpl(Function &F) : F(F), SGBuilder(&F) {}
+  DAGifyPassImpl(Function &F) : F(F), SGManager(&F) {}
 
 public:
   /// Helper function which transform a retreating edge into a `goto` edge
@@ -57,7 +57,7 @@ public:
                                 return Elem == Target;
                               }));
 
-    SGBuilder.makeGotoEdge(Source, Target);
+    SGManager.makeGotoEdge(Source, Target);
   }
 
   bool run(const GenericRegionInfo<Scope<Function *>> &RegionInfo) {

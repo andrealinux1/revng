@@ -77,13 +77,13 @@ static size_t electMaxScopeID(SmallSetVector<BasicBlock *, 2> &Predecessors,
 class SelectScopePassImpl {
   Function &F;
   PostDomTreeOnView<BasicBlock, Scope> PDT;
-  const ScopeGraphBuilder SGBuilder;
+  const ScopeGraphManager SGManager;
 
   // We keep a boolean field to track whether the `Function` was modified
   bool FunctionModified = false;
 
 public:
-  SelectScopePassImpl(Function &F) : F(F), SGBuilder(&F) {}
+  SelectScopePassImpl(Function &F) : F(F), SGManager(&F) {}
 
 public:
   void processConditionalNode(BasicBlock *ConditionalNode) {
@@ -189,7 +189,7 @@ public:
           // assigned to `Candidate`, we need to transform the edge into a
           // `goto` edge, in order to respect the decidedness definition.
           if (PredecessorScopeID != ElectedScopeID) {
-            SGBuilder.makeGotoEdge(Predecessor, Candidate);
+            SGManager.makeGotoEdge(Predecessor, Candidate);
 
             // We mark the CFG as modified
             FunctionModified = true;
