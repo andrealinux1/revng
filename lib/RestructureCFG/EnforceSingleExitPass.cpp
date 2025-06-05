@@ -55,7 +55,8 @@ static bool isInfiniteLoop(const scc_iterator<Scope<BasicBlock *>> &SCCIt) {
 /// blocks, and infinite loops too.
 class EnforceSingleExitPassImpl {
   Function &F;
-  const ScopeGraphManager SGManager;
+  const ScopeGraphManager<ScopeGraphManagerMode::GenericRegionIDDisabled>
+    SGManager;
 
 public:
   EnforceSingleExitPassImpl(Function &F) : F(F), SGManager(&F) {}

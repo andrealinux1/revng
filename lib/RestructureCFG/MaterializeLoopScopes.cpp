@@ -43,7 +43,7 @@ getImmediatePostDominator(BasicBlock *N,
 /// Implementation class used to run the `MaterializeLoopScopes` transformation
 class MaterializeLoopScopesImpl {
   Function &F;
-  ScopeGraphManager SGManager;
+  ScopeGraphManager<ScopeGraphManagerMode::GenericRegionIDDisabled> SGManager;
 
 public:
   MaterializeLoopScopesImpl(Function &F) : F(F), SGManager(&F) {}

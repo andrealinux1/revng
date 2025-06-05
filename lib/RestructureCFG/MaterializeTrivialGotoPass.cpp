@@ -19,7 +19,8 @@ using namespace llvm;
 // Debug logger
 Logger<> MaterializeTrivialGotoLogger("materialize-trivial-goto");
 
-static void eraseGoto(ScopeGraphManager &SGManager, BasicBlock &BB) {
+template<ScopeGraphManagerMode M>
+static void eraseGoto(ScopeGraphManager<M> &SGManager, BasicBlock &BB) {
 
   // If `BB` is a `GotoBlock`, it must have as terminator an unconditional
   // branch, which points to the `goto` target block.
@@ -31,8 +32,9 @@ static void eraseGoto(ScopeGraphManager &SGManager, BasicBlock &BB) {
   SGManager.eraseGoto(&BB);
 }
 
-static BasicBlock *eraseScopeCloser(ScopeGraphManager &SGManager,
-                                    BasicBlock &BB) {
+template<ScopeGraphManagerMode M>
+static BasicBlock *
+eraseScopeCloser(ScopeGraphManager<M> &SGManager, BasicBlock &BB) {
 
   // If the `GotoBlock` also contains a `scope_closer` edge, we also need
   // to remove it, and to restore it in case we need to rollback the
@@ -44,7 +46,8 @@ static BasicBlock *eraseScopeCloser(ScopeGraphManager &SGManager,
   return ScopeCloserTarget;
 }
 
-static void rollbackScopeGraph(ScopeGraphManager &SGManager,
+template<ScopeGraphManagerMode M>
+static void rollbackScopeGraph(ScopeGraphManager<M> &SGManager,
                                BasicBlock &BB,
                                BasicBlock *ScopeCloserTarget) {
   SGManager.makeGoto(&BB);
@@ -58,7 +61,7 @@ static void rollbackScopeGraph(ScopeGraphManager &SGManager,
 
 class MaterializeTrivialGotoPassImpl {
   Function &F;
-  ScopeGraphManager SGManager;
+  ScopeGraphManager<ScopeGraphManagerMode::GenericRegionIDDisabled> SGManager;
 
 public:
   MaterializeTrivialGotoPassImpl(Function &F) : F(F), SGManager(&F) {}

@@ -86,12 +86,14 @@ static Function *getOrCreateGotoBlockFunction(Module *M) {
   return Result;
 }
 
-ScopeGraphManager::ScopeGraphManager(Function *F) :
+template<ScopeGraphManagerMode M>
+ScopeGraphManager<M>::ScopeGraphManager(Function *F) :
   ScopeCloserFunction(getOrCreateScopeCloserFunction(F->getParent())),
   GotoBlockFunction(getOrCreateGotoBlockFunction(F->getParent())) {
 }
 
-void ScopeGraphManager::makeGoto(BasicBlock *GotoBlock) const {
+template<ScopeGraphManagerMode M>
+void ScopeGraphManager<M>::makeGoto(BasicBlock *GotoBlock) const {
   // We must have a `GotoBlock`
   revng_assert(GotoBlock);
 
@@ -106,7 +108,8 @@ void ScopeGraphManager::makeGoto(BasicBlock *GotoBlock) const {
   Builder.CreateCall(GotoBlockFunction, {});
 }
 
-void ScopeGraphManager::eraseGoto(BasicBlock *GotoBlock) const {
+template<ScopeGraphManagerMode M>
+void ScopeGraphManager<M>::eraseGoto(BasicBlock *GotoBlock) const {
   // We must have a `GotoBlock`
   revng_assert(GotoBlock);
 
@@ -124,8 +127,9 @@ void ScopeGraphManager::eraseGoto(BasicBlock *GotoBlock) const {
   }
 }
 
-void ScopeGraphManager::addScopeCloser(BasicBlock *Source,
-                                       BasicBlock *Target) const {
+template<ScopeGraphManagerMode M>
+void ScopeGraphManager<M>::addScopeCloser(BasicBlock *Source,
+                                          BasicBlock *Target) const {
   // We must have an insertion point
   revng_assert(Source);
 
@@ -138,7 +142,8 @@ void ScopeGraphManager::addScopeCloser(BasicBlock *Source,
   Builder.CreateCall(ScopeCloserFunction, BasicBlockAddressTarget);
 }
 
-BasicBlock *ScopeGraphManager::eraseScopeCloser(BasicBlock *Source) const {
+template<ScopeGraphManagerMode M>
+BasicBlock *ScopeGraphManager<M>::eraseScopeCloser(BasicBlock *Source) const {
 
   // We save the `Target` of the `scope_closer`, which will be returned by the
   // method, for eventual later restoring
@@ -155,8 +160,9 @@ BasicBlock *ScopeGraphManager::eraseScopeCloser(BasicBlock *Source) const {
   return ScopeCloserTarget;
 }
 
-BasicBlock *ScopeGraphManager::makeGotoEdge(BasicBlock *Source,
-                                            BasicBlock *Target) const {
+template<ScopeGraphManagerMode M>
+BasicBlock *ScopeGraphManager<M>::makeGotoEdge(BasicBlock *Source,
+                                               BasicBlock *Target) const {
   Function *F = Source->getParent();
 
   // Create the `goto` block, and connect it with the `Target`
@@ -276,3 +282,10 @@ void verifyScopeGraphAnnotations(const BasicBlock *BB) {
   verifyScopeGraphAnnotationsImpl(FunctionTags::ScopeCloserMarker, BB);
   verifyScopeGraphAnnotationsImpl(FunctionTags::GotoBlockMarker, BB);
 }
+
+// We need this explicit instantiantion in order to invoke the constructor for
+// both
+using ScopeGraphManagerMode::GenericRegionIDDisabled;
+using ScopeGraphManagerMode::GenericRegionIDEnabled;
+template class ScopeGraphManager<GenericRegionIDDisabled>;
+template class ScopeGraphManager<GenericRegionIDEnabled>;

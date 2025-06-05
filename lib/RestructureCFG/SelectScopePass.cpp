@@ -77,7 +77,8 @@ static size_t electMaxScopeID(SmallSetVector<BasicBlock *, 2> &Predecessors,
 class SelectScopePassImpl {
   Function &F;
   PostDomTreeOnView<BasicBlock, Scope> PDT;
-  const ScopeGraphManager SGManager;
+  const ScopeGraphManager<ScopeGraphManagerMode::GenericRegionIDDisabled>
+    SGManager;
 
   // We keep a boolean field to track whether the `Function` was modified
   bool FunctionModified = false;

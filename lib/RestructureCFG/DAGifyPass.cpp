@@ -23,7 +23,8 @@ Logger<> DAGifyPassLogger("dagify");
 
 class DAGifyPassImpl {
   Function &F;
-  const ScopeGraphManager SGManager;
+  const ScopeGraphManager<ScopeGraphManagerMode::GenericRegionIDDisabled>
+    SGManager;
 
 public:
   DAGifyPassImpl(Function &F) : F(F), SGManager(&F) {}

@@ -29,13 +29,21 @@ getUniqueFunctionWithTag(FunctionTags::Tag &MarkerFunctionTag, ModuleType *M) {
   return MarkerCallFunction;
 }
 
+enum class ScopeGraphManagerMode {
+  GenericRegionIDEnabled,
+  GenericRegionIDDisabled
+};
+
 /// A class that wraps all the logic for injecting goto edges and scope closer
 /// edges on LLVM IR. Such edges are then necessary for the ScopeGraph view on
 /// LLVM IR
+template<ScopeGraphManagerMode M>
 class ScopeGraphManager {
 private:
   llvm::Function *ScopeCloserFunction = nullptr;
   llvm::Function *GotoBlockFunction = nullptr;
+  llvm::Function *GenericRegionIDFunction = nullptr;
+  llvm::Function *GenericRegionIDHeadFunction = nullptr;
 
 public:
   ScopeGraphManager(llvm::Function *F);

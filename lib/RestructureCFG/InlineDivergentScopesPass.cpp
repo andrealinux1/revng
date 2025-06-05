@@ -342,8 +342,9 @@ static void createHead(BasicBlock *Conditional,
 }
 
 /// Helper function that performs the IDS transformation
+template<ScopeGraphManagerMode M>
 static void
-performMultipleIDS(const ScopeGraphManager &SGManager,
+performMultipleIDS(const ScopeGraphManager<M> &SGManager,
                    SmallVector<DivergenceDescriptor> &MultipleDivergences,
                    BasicBlock *PlaceHolderTarget) {
 
@@ -485,8 +486,9 @@ canAddDescriptor(const SmallVector<DivergenceDescriptor> &Collection,
 }
 
 /// Helper function which attempts to perform multiple IDS transformations
+template<ScopeGraphManagerMode M>
 static bool
-tryMultipleIDS(const ScopeGraphManager &SGManager,
+tryMultipleIDS(const ScopeGraphManager<M> &SGManager,
                SmallVector<DivergenceDescriptor> &DivergenceDescriptors,
                BasicBlock *PlaceHolderTarget) {
 
@@ -548,7 +550,8 @@ tryMultipleIDS(const ScopeGraphManager &SGManager,
 
 /// This helper function is used to attempt the IDS process, and returns `true`
 /// or `false` depending on whether a change is performed
-static bool tryIDS(const ScopeGraphManager &SGManager,
+template<ScopeGraphManagerMode M>
+static bool tryIDS(const ScopeGraphManager<M> &SGManager,
                    Function &F,
                    BasicBlock *PlaceHolderTarget) {
 
@@ -595,7 +598,8 @@ static bool tryIDS(const ScopeGraphManager &SGManager,
 /// Implementation class used to run the `IDS` transformation
 class InlineDivergentScopesImpl {
   Function &F;
-  const ScopeGraphManager SGManager;
+  const ScopeGraphManager<ScopeGraphManagerMode::GenericRegionIDDisabled>
+    SGManager;
 
 public:
   InlineDivergentScopesImpl(Function &F) : F(F), SGManager(&F) {}
