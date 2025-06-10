@@ -86,10 +86,51 @@ static Function *getOrCreateGotoBlockFunction(Module *M) {
   return Result;
 }
 
+static Function *getOrCreateGenericRegionIDFunction(Module *M) {
+  FunctionTags::Tag &Tag = FunctionTags::GenericRegionID;
+  Function *Result = getUniqueFunctionWithTag(Tag, M);
+
+  // Create the `GenericRegionIDMarker` function if it doesn't exist
+  if (not Result) {
+    auto *FT = FunctionType::get(Type::getVoidTy(getContext(M)), {}, true);
+    Result = cast<Function>(getOrInsertIRHelper(kebabToSnake(Tag.name()),
+                                                *M,
+                                                FT)
+                              .getCallee());
+    setFunctionAttributes(Result, Tag);
+  }
+  revng_assert(Result != nullptr);
+  return Result;
+}
+
+static Function *getOrCreateGenericRegionIDHeadFunction(Module *M) {
+  FunctionTags::Tag &Tag = FunctionTags::GenericRegionIDHead;
+  Function *Result = getUniqueFunctionWithTag(Tag, M);
+
+  // Create the `GenericRegionIDMarker` function if it doesn't exist
+  if (not Result) {
+    auto *FT = FunctionType::get(Type::getVoidTy(getContext(M)), {}, true);
+    Result = cast<Function>(getOrInsertIRHelper(kebabToSnake(Tag.name()),
+                                                *M,
+                                                FT)
+                              .getCallee());
+    setFunctionAttributes(Result, Tag);
+  }
+  revng_assert(Result != nullptr);
+  return Result;
+}
+
 template<ScopeGraphManagerMode M>
 ScopeGraphManager<M>::ScopeGraphManager(Function *F) :
   ScopeCloserFunction(getOrCreateScopeCloserFunction(F->getParent())),
   GotoBlockFunction(getOrCreateGotoBlockFunction(F->getParent())) {
+
+  // In case we are instantiating a version of the `ScopeGraphManager` which needs to be aware of the `GenericRegionID` information
+  if constexpr (M == ScopeGraphManagerMode::GenericRegionIDEnabled) {
+    GenericRegionIDFunction = getOrCreateGenericRegionIDFunction(F->getParent());
+    GenericRegionIDHeadFunction = getOrCreateGenericRegionIDHeadFunction(
+      F->getParent());
+  }
 }
 
 template<ScopeGraphManagerMode M>
