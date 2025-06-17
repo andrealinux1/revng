@@ -2030,12 +2030,23 @@ std::string decompile(ControlFlowGraphCache &Cache,
   // Generate the GHAST and beautify it.
   {
     T2.advance("restructureCFG");
-    restructureCFG(F, GHAST);
+    if (restructureCFG(F, GHAST)) {
+
+      // Early error return blanking the body of the function
+      return "Backend Decompilation Failed function: " + F.getName().str()
+             + "\n";
+    }
+
     // TODO: beautification should be optional, but at the moment it's not
     // truly so (if disabled, things crash). We should strive to make it
     // optional for real.
     T2.advance("beautifyAST");
-    beautifyAST(Model, F, GHAST);
+    if (beautifyAST(Model, F, GHAST)) {
+
+      // Early error return blanking the body of the function
+      return "Backend Decompilation Failed function: " + F.getName().str()
+             + "\n";
+    }
   }
 
   T2.advance("decompileFunction");
