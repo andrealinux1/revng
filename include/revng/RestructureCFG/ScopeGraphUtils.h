@@ -4,6 +4,8 @@
 // This file is distributed under the MIT License. See LICENSE.md for details.
 //
 
+#include "llvm/ADT/STLExtras.h"
+
 #include "revng/ADT/Concepts.h"
 #include "revng/Support/FunctionTags.h"
 
@@ -76,3 +78,24 @@ void verifyScopeGraphAnnotationsImpl(FunctionTags::Tag &Tag,
                                      const llvm::BasicBlock *BB);
 
 void verifyScopeGraphAnnotations(const llvm::BasicBlock *BB);
+
+/// Define a concept to restrict the usage of `replaceSuccessors` over a
+/// `SuccessorsToRemove` parameter of type the `SmallSet`s and `SmallVector`
+template<typename T, typename ValueType>
+concept IterableOfBasicBlockPtrs = requires(T Container) {
+  { std::begin(Container) } -> std::input_iterator;
+  { std::end(Container) };
+  { *std::begin(Container) } -> std::convertible_to<ValueType>;
+};
+
+/// Helper function which substitutes some successors in the `Terminator` with
+/// `NewTarget`
+template<IterableOfBasicBlockPtrs<llvm::BasicBlock *> Container>
+void replaceSuccessors(llvm::Instruction *Terminator,
+                       Container &SuccessorsToRemove,
+                       llvm::BasicBlock *NewTarget);
+
+/// Helper function which simplifies all the terminators containing
+/// `PlaceHolderTarget`, by removing it
+void simplifyTerminator(llvm::BasicBlock *BB,
+                        const llvm::BasicBlock *PlaceHolderTarget);
