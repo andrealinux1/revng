@@ -6,6 +6,7 @@ add_mlir_dialect_library(
   MLIRCliftTransforms
   SHARED
   CSemantics.cpp
+  Beautify/LoopDetection.cpp
   DEPENDS
   LINK_LIBS
   PUBLIC
