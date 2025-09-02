@@ -4,7 +4,7 @@
 
 #include "mlir/Pass/Pass.h"
 
-// #include "revng/mlir/Dialect/Clift/IR/CliftOpHelpers.h"
+#include "revng/mlir/Dialect/Clift/IR/CliftOpHelpers.h"
 #include "revng/mlir/Dialect/Clift/IR/CliftOps.h"
 #include "revng/mlir/Dialect/Clift/Transforms/Passes.h"
 
@@ -77,7 +77,7 @@ static void createLoop(clift::FunctionOp Function,
 
   // True if the last goto is in the scope of the label.
   bool GotoInLabelScope = Gotos.back()->getBlock() == OuterBlock;
-  //llvm::errs() << "GotoInLabelScope: " << GotoInLabelScope << "\n";
+  // llvm::errs() << "GotoInLabelScope: " << GotoInLabelScope << "\n";
 
   auto FindLoopEnd = [&](mlir::Operation *BoundingOp) -> mlir::Block::iterator {
     while (BoundingOp->getBlock() != OuterBlock)
@@ -186,7 +186,7 @@ static void createLoops(clift::FunctionOp Function) {
     }
   });
 
-  for (size_t GotoIndex = 0; auto& [Label, GotoCount] : LoopLabels) {
+  for (size_t GotoIndex = 0; auto &[Label, GotoCount] : LoopLabels) {
     size_t I = std::exchange(GotoIndex, GotoIndex + GotoCount);
     createLoop(Function, Label, llvm::ArrayRef(LoopGotos).slice(I, GotoCount));
   }

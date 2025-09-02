@@ -56,9 +56,7 @@ public:
 };
 
 template<typename ConcreteType>
-class ReturnsBoolean : public OpTrait::TraitBase<ConcreteType, ReturnsBoolean> {
-  using Base = OpTrait::TraitBase<ConcreteType, ReturnsBoolean>;
-};
+class SideEffects : public OpTrait::TraitBase<ConcreteType, SideEffects> {};
 
 } // namespace clift
 } // namespace OpTrait

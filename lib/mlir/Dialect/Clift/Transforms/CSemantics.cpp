@@ -20,7 +20,15 @@ namespace {
 
 struct VerifyCPass : clift::impl::CliftVerifyCBase<VerifyCPass> {
   void runOnOperation() override {
-    const auto &Target = clift::TargetCImplementation::Default;
+    clift::TargetCImplementation Target = {
+      .PointerSize = 8,
+      .IntegerTypes = {
+        { 1, clift::CIntegerKind::Char },
+        { 2, clift::CIntegerKind::Short },
+        { 4, clift::CIntegerKind::Int },
+        { 8, clift::CIntegerKind::Long },
+      },
+    };
 
     if (mlir::failed(verifyCSemantics(getOperation(), Target)))
       signalPassFailure();
@@ -29,7 +37,7 @@ struct VerifyCPass : clift::impl::CliftVerifyCBase<VerifyCPass> {
 
 } // namespace
 
-std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
+clift::PassPtr<mlir::ModuleOp>
 clift::createVerifyCPass() {
   return std::make_unique<VerifyCPass>();
 }

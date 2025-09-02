@@ -282,6 +282,7 @@ def Clift_GoToOp : Clift_StatementOp<"goto", [Clift_NoFallthrough]> {
 
   let extraClassDeclaration = [{
     [[nodiscard]] MakeLabelOp getLabelOp();
+    [[nodiscard]] AssignLabelOp getAssignLabelOp();
   }];
 }
 
@@ -499,7 +500,7 @@ class Clift_PointerArithmeticOp<string mnemonic>
 class Clift_BinaryLogicalOp<string mnemonic>
   : Clift_ExpressionOp<mnemonic,
                        [NoMemoryEffect,
-                        Clift_ReturnsBoolean]> {
+                        Clift_SideEffects]> {
 
   let arguments = (ins Clift_AnyScalarType:$lhs,
                        Clift_AnyScalarType:$rhs);
@@ -533,7 +534,7 @@ class Clift_ShiftOp<string mnemonic>
 class Clift_ComparisonOp<string mnemonic>
   : Clift_ExpressionOp<mnemonic,
                        [NoMemoryEffect,
-                        Clift_ReturnsBoolean,
+                        Commutative,
                         Clift_AllTypesMatch<["lhs", "rhs"]>]> {
 
   let arguments = (ins Clift_AnyScalarType:$lhs,
@@ -598,8 +599,7 @@ def Clift_PtrDiffOp
 
 def Clift_LogicalNotOp
   : Clift_ExpressionOp<"not",
-                       [NoMemoryEffect,
-                        Clift_ReturnsBoolean]> {
+                       [NoMemoryEffect]> {
 
   let arguments = (ins Clift_AnyIntegerType:$value);
   let results = (outs Clift_AnyNonConstType<Clift_AnyIntegerType>:$result);
