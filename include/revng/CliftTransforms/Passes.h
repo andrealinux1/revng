@@ -32,6 +32,8 @@ createCLegalizationPass(const TargetCImplementation &Target);
 
 PassPtr<clift::FunctionOp> createImmediateRadixDeductionPass();
 
+PassPtr<clift::FunctionOp> createEmitFieldAccessesPass();
+
 PassPtr<mlir::ModuleOp> createVerifyCPass();
 PassPtr<mlir::ModuleOp> createEmitCPass();
 

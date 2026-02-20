@@ -80,4 +80,9 @@ def CliftEmitC : Clift_Pass<"emit-c", "mlir::ModuleOp"> {
   ];
 }
 
+def CliftEmitFieldAccesses : Clift_Pass<"emit-field-accesses", "clift::FunctionOp"> {
+  let summary = "Emit field accesses.";
+  let constructor = "mlir::clift::createEmitFieldAccessesPass()";
+}
+
 #endif // MLIR_CLIFT_PASSES
