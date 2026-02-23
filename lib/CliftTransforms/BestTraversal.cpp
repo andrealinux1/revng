@@ -6,6 +6,8 @@
 #include <memory>
 #include <optional>
 
+#include "llvm/ADT/STLExtras.h"
+
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 
@@ -14,6 +16,7 @@
 #include "revng/CliftTransforms/EmitFieldAccesses.h"
 #include "revng/CliftTransforms/Passes.h"
 #include "revng/CliftTransforms/PointerArithmetic.h"
+#include "revng/Support/Assert.h"
 #include "revng/Support/CTarget.h"
 
 namespace clift = mlir::clift;
@@ -298,138 +301,81 @@ private:
 
   // Helper function to get the distance to a common ancestor
   long getDistanceToNode(LatticeNode From, LatticeNode To) {
-    if (From == To)
-      return 0;
+    auto Ancestors = getAncestors(From);
 
-    // Define the lattice hierarchy paths (upward steps)
-    switch (From) {
-    case LatticeNode::Unsigned:
-    case LatticeNode::Signed:
-      if (To == LatticeNode::Number)
-        return 1;
-      if (To == LatticeNode::PointerOrNumber)
-        return 2;
-      if (To == LatticeNode::Generic)
-        return 3;
-      break;
-
-    case LatticeNode::SpecificPointer:
-      if (To == LatticeNode::PointerOrNumber)
-        return 1;
-      if (To == LatticeNode::Generic)
-        return 2;
-      break;
-
-    case LatticeNode::SpecificEnum:
-      if (To == LatticeNode::Unsigned)
-        return 1;
-      if (To == LatticeNode::Number)
-        return 2;
-      if (To == LatticeNode::PointerOrNumber)
-        return 3;
-      if (To == LatticeNode::Generic)
-        return 4;
-      break;
-
-    case LatticeNode::Float:
-      if (To == LatticeNode::Generic)
-        return 1;
-      break;
-
-    case LatticeNode::Number:
-      if (To == LatticeNode::PointerOrNumber)
-        return 1;
-      if (To == LatticeNode::Generic)
-        return 2;
-      break;
-
-    case LatticeNode::PointerOrNumber:
-      if (To == LatticeNode::Generic)
-        return 1;
-      break;
-
-    case LatticeNode::Generic:
-      return 0; // Already at top
+    // We walk up the list of ancenstors counting the steps
+    for (auto [I, Ancestor] : llvm::enumerate(Ancestors)) {
+      if (Ancestor == To)
+        return I;
     }
 
-    return std::numeric_limits<long>::max(); // No path
-  };
+    // In case we found no path from `From` to `To` we return a placeholder
+    // value
+    return std::numeric_limits<long>::max();
+  }
+
+  // Helper method which returns the ordered list of `Ancestor`s of a
+  // `LatticeNode`
+  std::vector<LatticeNode> getAncestors(LatticeNode N) {
+    using LN = LatticeNode;
+    switch (N) {
+    case LN::SpecificEnum:
+      return { LN::SpecificEnum,
+               LN::Unsigned,
+               LN::Number,
+               LN::PointerOrNumber,
+               LN::Generic };
+    case LN::Unsigned:
+      return { LN::Unsigned, LN::Number, LN::PointerOrNumber, LN::Generic };
+    case LN::Signed:
+      return { LN::Signed, LN::Number, LN::PointerOrNumber, LN::Generic };
+    case LN::Number:
+      return { LN::Number, LN::PointerOrNumber, LN::Generic };
+    case LN::SpecificPointer:
+      return { LN::SpecificPointer, LN::PointerOrNumber, LN::Generic };
+    case LN::PointerOrNumber:
+      return { LN::PointerOrNumber, LN::Generic };
+    case LN::Float:
+      return { LN::Float, LN::Generic };
+    case LN::Generic:
+      return { LN::Generic };
+    }
+    revng_abort("Unhandled LatticeNode");
+  }
 
   // Helper to find least common ancestor (LCA) in the lattice
   LatticeNode findLCA(LatticeNode A, LatticeNode B) {
 
-    // Remember that for `enum`s and `pointer`s, if they are of the same type,
-    // we already have a distance in the top `typeDistance` call. If we reach
-    // this point, it means that `enum`s and `pointer`s are of different kind,
-    // so we need to explicitly handle their `LCA`
-    if (A == LatticeNode::SpecificEnum and B == LatticeNode::SpecificEnum) {
-      return LatticeNode::Unsigned;
+    // At this point, `A == B` can only be only in case we have `SpecificEnum`
+    // or `SpecificPointer` (because they are two distinct type of the same
+    // family). Identical primitive type are caught by the `LHS == RHS` early
+    // exit check in `typeDistance`.
+    if (A == B) {
+      revng_assert(A == LatticeNode::SpecificEnum
+                   or A == LatticeNode::SpecificPointer);
     }
 
-    if (A == LatticeNode::SpecificPointer
-        and B == LatticeNode::SpecificPointer) {
-      return LatticeNode::PointerOrNumber;
+    // For each node, its ordered ancestor chain from self to `Generic`
+    // (inclusive). SpecificEnum/SpecificPointer represent *families* of
+    // distinct types, so when A == B for these, the LCA is their parent
+    // (handled via SameFamily). The
+    auto AncestorsA = getAncestors(A);
+    auto AncestorsB = getAncestors(B);
+    std::set<LatticeNode> SetB(AncestorsB.begin(), AncestorsB.end());
+
+    // When A == B, it can only be `SpecificEnum` or `SpecificPointer`.
+    // In that case, skip self and start from the parent.
+    size_t StartIdx = (A == B) ? 1 : 0;
+    for (size_t I = StartIdx; I < AncestorsA.size(); ++I) {
+      auto AncestorI = AncestorsA.at(I);
+
+      // As soon as we reach an ancestor in common, we found the `LCA`
+      if (SetB.count(AncestorI))
+        return AncestorI;
     }
 
-    // Excluding the two cases above, if they are the same, that's the LCA
-    if (A == B)
-      return A;
-
-    // Handle all the non-trivial cases where `unsigned` is the LCA
-    if ((A == LatticeNode::SpecificEnum and B == LatticeNode::Unsigned)
-        or (A == LatticeNode::Unsigned and B == LatticeNode::SpecificEnum)) {
-      return LatticeNode::Unsigned;
-    }
-
-    // Handle all the non-trivial cases where `number` is the LCA
-    bool AIsEnumOrUnsigned = (A == LatticeNode::SpecificEnum
-                              or A == LatticeNode::Unsigned);
-    bool BIsEnumOrUnsigned = (B == LatticeNode::SpecificEnum
-                              or B == LatticeNode::Unsigned);
-
-    if ((AIsEnumOrUnsigned and B == LatticeNode::Signed)
-        or (BIsEnumOrUnsigned and A == LatticeNode::Signed)) {
-      return LatticeNode::Number;
-    }
-    if ((AIsEnumOrUnsigned and B == LatticeNode::Number)
-        or (BIsEnumOrUnsigned and A == LatticeNode::Number)) {
-      return LatticeNode::Number;
-    }
-    if ((A == LatticeNode::Signed and B == LatticeNode::Number)
-        or (A == LatticeNode::Number and B == LatticeNode::Signed)) {
-      return LatticeNode::Number;
-    }
-
-    // Handle all the non-trivial cases where `pointer_or_number` is the LCA
-    bool AIsNumeric = (AIsEnumOrUnsigned or A == LatticeNode::Signed
-                       or A == LatticeNode::Number);
-    bool BIsNumeric = (BIsEnumOrUnsigned or B == LatticeNode::Signed
-                       or B == LatticeNode::Number);
-    bool AIsPointer = (A == LatticeNode::SpecificPointer);
-    bool BIsPointer = (B == LatticeNode::SpecificPointer);
-
-    if ((AIsNumeric and BIsPointer) or (BIsNumeric and AIsPointer)) {
-      return LatticeNode::PointerOrNumber;
-    }
-    if ((AIsNumeric and B == LatticeNode::PointerOrNumber)
-        or (BIsNumeric and A == LatticeNode::PointerOrNumber)) {
-      return LatticeNode::PointerOrNumber;
-    }
-    if ((AIsPointer and B == LatticeNode::PointerOrNumber)
-        or (BIsPointer and A == LatticeNode::PointerOrNumber)) {
-      return LatticeNode::PointerOrNumber;
-    }
-
-    // Handle `float` with anything else, which is trivially `generic`
-    if (A == LatticeNode::Float or B == LatticeNode::Float) {
-      return LatticeNode::Generic;
-    }
-
-    // Default: `generic` (top)
-    // Handle the fallback case where we end up in `generic` (top of the
-    // lattice)
-    return LatticeNode::Generic;
-  };
+    revng_abort("LCA not found, `Generic` should always be a common ancestor");
+  }
 
 public:
   long getTypeDistance(mlir::Type LHS, mlir::Type RHS) {
