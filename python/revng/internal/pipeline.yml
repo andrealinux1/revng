@@ -354,6 +354,12 @@ branches:
             - label-merging
             - optimize-expressions
             - terminal-branch-complement-hoisting
+            - name: dump-function
+              options: output-path=/tmp/pre
+            - emit-field-accesses
+            - canonicalize
+            - name: dump-function
+              options: output-path=/tmp/post
             - c-legalization
             - deduce-immediate-radices
       - pipe: model-verify-clift

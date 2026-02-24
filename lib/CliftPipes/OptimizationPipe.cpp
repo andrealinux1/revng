@@ -62,6 +62,9 @@ public:
     PM.addPass(clift::createOptimizeExpressionsPass());
     PM.addPass(clift::createTerminalBranchComplementHoistingPass());
 
+    PM.addPass(clift::createEmitFieldAccessesPass());
+    PM.addPass(mlir::createCanonicalizerPass());
+
     PM.addPass(clift::createCLegalizationPass(TargetCImplementation::Default));
     PM.addPass(clift::createImmediateRadixDeductionPass());
 

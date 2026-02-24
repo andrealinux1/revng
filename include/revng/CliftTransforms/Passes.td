@@ -85,4 +85,21 @@ def CliftEmitFieldAccesses : Clift_Pass<"emit-field-accesses", "clift::FunctionO
   let constructor = "mlir::clift::createEmitFieldAccessesPass()";
 }
 
+def CliftDumpFunction : Clift_Pass<"dump-function", "clift::FunctionOp"> {
+  let summary = "Dump clift function to a file.";
+  let constructor = "mlir::clift::createDumpFunctionPass()";
+  let options = [
+    Option<"OutputPath", "output-path", "std::string", /*default*/"\"-\"", "mlir output path">
+  ];
+}
+
+def CliftDumpModule : Clift_Pass<"dump-module", "mlir::ModuleOp"> {
+  let summary = "Dump mlir modules to a file.";
+  let constructor = "mlir::clift::createDumpModulePass()";
+  let options = [
+    Option<"OutputPath", "output-path", "std::string", /*default*/"\"-\"", "mlir output path">
+  ];
+}
+
+
 #endif // MLIR_CLIFT_PASSES

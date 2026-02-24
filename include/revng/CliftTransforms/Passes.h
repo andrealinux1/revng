@@ -34,6 +34,9 @@ PassPtr<clift::FunctionOp> createImmediateRadixDeductionPass();
 
 PassPtr<clift::FunctionOp> createEmitFieldAccessesPass();
 
+PassPtr<clift::FunctionOp> createDumpFunctionPass();
+PassPtr<mlir::ModuleOp> createDumpModulePass();
+
 PassPtr<mlir::ModuleOp> createVerifyCPass();
 PassPtr<mlir::ModuleOp> createEmitCPass();
 
