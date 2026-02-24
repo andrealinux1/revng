@@ -7,6 +7,8 @@ revng_add_library_internal(
   SHARED
   BestTraversal.cpp
   BooleanNegations.cpp
+  DumpFunction.cpp
+  DumpModule.cpp
   EmitFieldAccesses.cpp
   Expressions.cpp
   FieldAccessReplacement.cpp

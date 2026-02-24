@@ -353,7 +353,11 @@ branches:
             - optimize-statements
             - label-merging
             - optimize-expressions
+            - name: dump-function
+              options: output-path=/tmp/pre
             - emit-field-accesses
+            - name: dump-function
+              options: output-path=/tmp/post
             - canonicalize
             - optimize-expressions
             - terminal-branch-complement-hoisting
