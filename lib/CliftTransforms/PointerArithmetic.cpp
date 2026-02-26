@@ -43,7 +43,7 @@ bool PointerArithmetic::isAddress() const {
 
 bool PointerArithmetic::verify() const {
 
-  auto LinearCombination = Offset.LinearCombination;
+  const auto &LinearCombination = Offset.LinearCombination;
 
   // Check that strides are strictly positive. Negative or null strides do not
   // make sense
