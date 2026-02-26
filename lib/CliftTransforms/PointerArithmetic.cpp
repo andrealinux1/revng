@@ -382,8 +382,8 @@ std::optional<PointerArithmetic> PointerArithmeticBuilder::composeMul(MulOp Mul)
     Variable = LHS;
   } else {
 
-    // Neither operand is constant, this should not happen
-    revng_abort();
+    // Neither operand is constant, bail out
+    return std::nullopt;
   }
 
   // Traverse the variable operand
