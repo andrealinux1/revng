@@ -119,12 +119,12 @@ void PointerArithmetic::dump() const {
   Log.flush();
 }
 
-namespace {
+// =============================================================================
+// `PointerArithmeticBuilder` class implementation, which contains the logic
+// used to compute the resulting `PointerArithmetic`
+// =============================================================================
 
-// =============================================================================
-// `PointerArithmeticImpl` class implementation, which contains the logic used
-// to compute the resulting `PointerArithmetic`
-// =============================================================================
+namespace {
 
 /// The `PointerArithmeticImpl` class is the main helper class used for
 /// computing the `PointerArithmetic` object starting from the
