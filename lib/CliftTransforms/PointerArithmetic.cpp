@@ -80,7 +80,7 @@ void PointerArithmetic::dump() const {
     ValueToPrint.print(*Log.getAsLLVMStream());
     Log << "\n";
   } else {
-    Log << "(null: numeric PA)\n";
+    Log << "(null)\n";
   }
 
   Log << "  Base Offset: ";
