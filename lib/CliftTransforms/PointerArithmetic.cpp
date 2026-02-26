@@ -162,8 +162,9 @@ private:
   mergeArithmetics(const PointerArithmetic &LHS, const PointerArithmetic &RHS);
 
   // Helper function used to multiply all the `PointerArithmetic` strides and
-  // offset by a constant
-  PointerArithmetic multiplyByConstant(PointerArithmetic &PA,
+  // offset by a constant. Clears the BasePointer since the result of a
+  // multiplication is no longer a pointer.
+  PointerArithmetic multiplyByConstant(PointerArithmetic PA,
                                        const llvm::APInt &Multiplier);
 
   // Helper function used to sort linear combination by stride, in descending
@@ -467,8 +468,8 @@ PointerArithmeticBuilder::mergeArithmetics(const PointerArithmetic &LHS,
 }
 
 PointerArithmetic
-PointerArithmeticBuilder::multiplyByConstant(PointerArithmetic &PA,
-                                          const llvm::APInt &Multiplier) {
+PointerArithmeticBuilder::multiplyByConstant(PointerArithmetic PA,
+                                             const llvm::APInt &Multiplier) {
 
   // Multiply the base offset
   PA.Offset.BaseOffset = PA.Offset.BaseOffset * Multiplier;
@@ -477,6 +478,9 @@ PointerArithmeticBuilder::multiplyByConstant(PointerArithmetic &PA,
   for (auto &Term : PA.Offset.LinearCombination) {
     Term.Stride = Term.Stride * Multiplier;
   }
+
+  // Multiplying implicitly returns something that is not a pointer
+  PA.BasePointer = mlir::Value();
 
   return PA;
 }
