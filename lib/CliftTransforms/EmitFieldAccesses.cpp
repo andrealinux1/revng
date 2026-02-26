@@ -37,6 +37,13 @@ struct EmitFieldAccessesPass
   }
 };
 
+/// Holds the planned replacement for a single expression
+struct PlannedReplacement {
+  clift::ExpressionOpInterface Op;
+  PointerArithmetic PA;
+  Traversal BestTraversal;
+};
+
 /// Implementation of the high level `emitFieldAccesses` phases inside the
 /// anonymous namespace in this translation unit
 mlir::LogicalResult emitFieldAccessesImpl(clift::FunctionOp Function) {
@@ -46,7 +53,10 @@ mlir::LogicalResult emitFieldAccessesImpl(clift::FunctionOp Function) {
   // time
   TraversalInfoMap TraversalMap;
 
-  Function->walk([&TraversalMap](clift::ExpressionOpInterface Op) {
+  // Phase 1-2: Collect all planned replacements without modifying the IR
+  llvm::SmallVector<PlannedReplacement> Replacements;
+  Function->walk([&TraversalMap,
+                  &Replacements](clift::ExpressionOpInterface Op) {
     // 1. We inspect all the `ExpressionOp`s in the current `Function`
     std::optional<PointerArithmetic> PA = computePointerArithmetic(Op);
 
@@ -57,15 +67,18 @@ mlir::LogicalResult emitFieldAccessesImpl(clift::FunctionOp Function) {
     // 2. We proceed with the computation of the `BestTraversal` for the current
     //    `PointerArithmetic`
     if (PA) {
-      auto BestTraversal = computeBestTraversal(Op, *PA, TraversalMap);
+      auto BT = computeBestTraversal(Op, *PA, TraversalMap);
 
-      // 3. In case we have found a `BestTraversal`, we proceed with the
-      //    replacement operation
-      if (BestTraversal) {
-        replaceFieldAccess(Op, *PA, *BestTraversal);
+      if (BT) {
+        Replacements.push_back({ Op, std::move(*PA), std::move(*BT) });
       }
     }
   });
+
+  // Phase 3: Apply all replacements
+  for (const auto &R : Replacements) {
+    replaceFieldAccess(R.Op, R.PA, R.BestTraversal);
+  }
 
   // The IR is always in a valid state, regardless of whether we performed an
   // operation rewrite or not.
