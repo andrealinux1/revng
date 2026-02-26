@@ -44,9 +44,9 @@ mlir::LogicalResult emitFieldAccessesImpl(clift::FunctionOp Function) {
   // `TraversalInfoMap` cache. Even if not elegant, we store the data computed
   // at the pass level so that we can cache it instead of recomputing it every
   // time
-  TraversalInfoMap TraversalInfoMap;
+  TraversalInfoMap TraversalMap;
 
-  Function->walk([&TraversalInfoMap](clift::ExpressionOpInterface Op) {
+  Function->walk([&TraversalMap](clift::ExpressionOpInterface Op) {
     // 1. We inspect all the `ExpressionOp`s in the current `Function`
     std::optional<PointerArithmetic> PA = computePointerArithmetic(Op);
 
@@ -57,7 +57,7 @@ mlir::LogicalResult emitFieldAccessesImpl(clift::FunctionOp Function) {
     // 2. We proceed with the computation of the `BestTraversal` for the current
     //    `PointerArithmetic`
     if (PA) {
-      auto BestTraversal = computeBestTraversal(Op, *PA, TraversalInfoMap);
+      auto BestTraversal = computeBestTraversal(Op, *PA, TraversalMap);
 
       // 3. In case we have found a `BestTraversal`, we proceed with the
       //    replacement operation
