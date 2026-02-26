@@ -177,19 +177,9 @@ private:
 
 /// Helper function used to verify if an `ExpressionOpInterface` is
 /// `PointerType`d
-static bool isPointerTypeExpr(ExpressionOpInterface Expr) {
-  // We verify that the expression produces a result
-  if (not Expr->getResult(0)) {
-    return false;
-  }
-  if (not Expr->getResult(0).getType()) {
-    return false;
-  }
-  if (not Expr->getResult(0).getType().isa<PointerType>()) {
-    return false;
-  }
-
-  return true;
+static bool isPointerTyped(ExpressionOpInterface Expr) {
+  return Expr->getNumResults() > 0
+         and Expr->getResult(0).getType().isa<PointerType>();
 }
 
 /// Helper function used to extract the underlying constant value from an
@@ -211,7 +201,7 @@ PointerArithmeticBuilder::computePointerArithmetic(ExpressionOpInterface
                                                   PointerToReplace) {
 
   // We skip every non pointer-typed `PointerToReplace`
-  if (not isPointerTypeExpr(PointerToReplace)) {
+  if (not isPointerTyped(PointerToReplace)) {
     return std::nullopt;
   }
 
