@@ -35,7 +35,7 @@ struct NestedArrayShape {
   uint64_t Stride;
 };
 
-/// A path of traversed `array`s is represented as a vector. This are kept
+/// A path of traversed `array`s is represented as a vector. These are kept
 /// sorted with larger strides first, and we assume that there are no duplicated
 /// strides
 using ArrayPath = std::vector<NestedArrayShape>;
