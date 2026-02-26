@@ -46,7 +46,7 @@ mlir::LogicalResult emitFieldAccessesImpl(clift::FunctionOp Function) {
   // time
   TraversalInfoMap TraversalInfoMap;
 
-  Function->walk([&](clift::ExpressionOpInterface Op) {
+  Function->walk([&TraversalInfoMap](clift::ExpressionOpInterface Op) {
     // 1. We inspect all the `ExpressionOp`s in the current `Function`
     auto PA = computePointerArithmetic(Op);
 
