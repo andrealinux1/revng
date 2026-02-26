@@ -75,7 +75,7 @@ mlir::LogicalResult emitFieldAccessesImpl(clift::FunctionOp Function) {
 } // namespace
 
 /// `emitFieldAccesses` driver that can be called by importing the header
-mlir::LogicalResult clift::emitFieldAccesses(clift::FunctionOp Function) {
+mlir::LogicalResult emitFieldAccesses(clift::FunctionOp Function) {
   return emitFieldAccessesImpl(Function);
 }
 

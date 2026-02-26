@@ -7,8 +7,4 @@
 #include "revng/Clift/Clift.h"
 #include "revng/Support/CTarget.h"
 
-namespace mlir::clift {
-
-mlir::LogicalResult emitFieldAccesses(clift::FunctionOp Function);
-
-} // namespace mlir::clift
+mlir::LogicalResult emitFieldAccesses(mlir::clift::FunctionOp Function);
