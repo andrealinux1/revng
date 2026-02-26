@@ -46,20 +46,19 @@ struct PointerArithmetic {
   /// Represents the offset with possible strided terms in the
   /// `PointerArithmetic`
   struct OffsetExpression {
-    llvm::APInt BaseOffset; ///< Represents the constant part `Offset`
-    llvm::SmallVector<StridedTerm> LinearCombination; ///< Holds the terms of
-                                                      ///< the linear
-                                                      ///< combination
-                                                      ///< components of the
-                                                      ///< `Offset`
+    /// Represents the constant part of the offset
+    llvm::APInt BaseOffset;
+    /// Holds the terms of the linear combination components of the offset
+    llvm::SmallVector<StridedTerm> LinearCombination;
 
     OffsetExpression();
     OffsetExpression(llvm::APInt Offset);
   };
 
-  mlir::Value BasePointer; ///< The `BasePointer` relative to the
-                           ///< `PointerArithmetic` is expressed
-  OffsetExpression Offset; ///< The `Offset` w.r.t. the `BasePointer`
+  /// The base pointer the `PointerArithmetic` is expressed relative to
+  mlir::Value BasePointer;
+  /// The offset w.r.t. the `BasePointer`
+  OffsetExpression Offset;
 
   /// We define a `PointerArithmetic` with an empty `BasePointer` a _numeric_
   bool isNumeric() const;
