@@ -22,8 +22,9 @@
 #include "revng/Clift/CliftTypes.h"
 #include "revng/Support/Assert.h"
 
-/// Data structure used to represent the result of the computation of the
-/// `PointerArithmetic`
+/// Represents a pointer-typed expression decomposed into a base pointer and an
+/// offset expression. The offset is a linear combination of strided terms, which
+/// capture array index patterns, plus a constant base offset.
 struct PointerArithmetic {
 
   /// Represents a strided term in the `PointerArithmetic`
