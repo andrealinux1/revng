@@ -46,8 +46,7 @@ struct ArrayShape {
   uint64_t NumElements; ///< Size of the described array
   uint64_t Stride; ///< Stride of the described array
 
-  /// We give an order to `ArrayShape`s on the basis of the size of their
-  /// `Stride`s
+  /// Orders `ArrayShape`s by descending `Stride`, then ascending `NumElements`
   bool operator<(const ArrayShape &Other) const;
 
   bool operator==(const ArrayShape &Other) const = default;
