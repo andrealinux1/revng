@@ -5,22 +5,13 @@
 //
 
 #include <optional>
-#include <set>
 
 #include "llvm/ADT/APInt.h"
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/Support/Casting.h"
+#include "llvm/ADT/SmallVector.h"
 
-#include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
-#include "mlir/Support/LLVM.h"
-#include "mlir/Support/LogicalResult.h"
 
-#include "revng/Clift/Clift.h"
 #include "revng/Clift/CliftOpInterfaces.h"
-#include "revng/Clift/CliftTypeInterfaces.h"
-#include "revng/Clift/CliftTypes.h"
-#include "revng/Support/Assert.h"
 
 /// Represents a pointer-typed expression decomposed into a base pointer and an
 /// offset expression. The offset is a linear combination of strided terms, which
