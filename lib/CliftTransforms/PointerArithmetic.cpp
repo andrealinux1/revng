@@ -338,6 +338,10 @@ PointerArithmeticBuilder::composePtrAdd(PtrAddOp Add) {
   auto PointerOperandPA = traverse(PointerOperand);
   auto OffsetOperandPA = traverse(OffsetOperand);
 
+  if (not PointerOperandPA or not OffsetOperandPA) {
+    return std::nullopt;
+  }
+
   // We should check that the pointer and offset operands are not both `numeric`
   // or `address`
   revng_assert(not(PointerOperandPA->isAddress()
