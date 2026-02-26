@@ -19,9 +19,8 @@
 #include "revng/Clift/CliftTypes.h"
 #include "revng/Support/Assert.h"
 
-// Forward declarations
-struct PointerArithmetic;
-struct Traversal;
+#include "revng/CliftTransforms/BestTraversal.h"
+#include "revng/CliftTransforms/PointerArithmetic.h"
 
 void replaceFieldAccess(mlir::clift::ExpressionOpInterface PointerToReplace,
                         const PointerArithmetic &Arithmetic,
