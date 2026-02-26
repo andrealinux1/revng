@@ -12,9 +12,9 @@
 #include "revng/Clift/Clift.h"
 #include "revng/Clift/CliftEnums.h"
 #include "revng/Clift/CliftOpInterfaces.h"
-#include "revng/CliftTransforms/EmitFieldAccesses.h"
+#include "EmitFieldAccesses.h"
 #include "revng/CliftTransforms/Passes.h"
-#include "revng/CliftTransforms/PointerArithmetic.h"
+#include "PointerArithmetic.h"
 #include "revng/Support/CTarget.h"
 
 namespace clift = mlir::clift;

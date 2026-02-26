@@ -12,10 +12,10 @@
 #include "mlir/IR/BuiltinTypes.h"
 
 #include "revng/Clift/CliftEnums.h"
-#include "revng/CliftTransforms/BestTraversal.h"
-#include "revng/CliftTransforms/EmitFieldAccesses.h"
+#include "BestTraversal.h"
+#include "EmitFieldAccesses.h"
 #include "revng/CliftTransforms/Passes.h"
-#include "revng/CliftTransforms/PointerArithmetic.h"
+#include "PointerArithmetic.h"
 #include "revng/Support/Assert.h"
 #include "revng/Support/CTarget.h"
 
