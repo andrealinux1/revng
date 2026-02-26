@@ -108,7 +108,7 @@ struct Traversal {
 
   /// Debug `dump` method used to provide a textual representation on the logger
   /// of the `Traversal`
-  void dump() const;
+  void dump() const debug_function;
 };
 
 /// `TraversalInfo` describes a set of `Traversal`s and `ArrayPaths`, which we
