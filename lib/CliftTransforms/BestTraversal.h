@@ -50,9 +50,7 @@ struct ArrayShape {
   /// `Stride`s
   bool operator<(const ArrayShape &Other) const;
 
-  /// We define two `ArrayShape`s as equal if they have the same `Stride` and
-  /// `NumElements`
-  bool operator==(const ArrayShape &Other) const;
+  bool operator==(const ArrayShape &Other) const = default;
 };
 
 /// This represents a type traversal starting from a fixed `BaseType`.

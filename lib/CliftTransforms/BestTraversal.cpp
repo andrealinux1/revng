@@ -165,10 +165,6 @@ bool ArrayShape::operator<(const ArrayShape &Other) const {
   return NumElements < Other.NumElements;
 }
 
-bool ArrayShape::operator==(const ArrayShape &Other) const {
-  return Stride == Other.Stride && NumElements == Other.NumElements;
-}
-
 // =============================================================================
 // `Traversal` class methods
 // =============================================================================
