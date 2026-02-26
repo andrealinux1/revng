@@ -23,7 +23,9 @@
 // Forward declarations
 struct PointerArithmetic;
 
-/// `NestedArrayShape` represents the
+/// `NestedArrayShape` represents the shape of a nested array element within a
+/// type traversal, including its offset from the parent array element, the
+/// number of elements, and the stride between consecutive elements.
 struct NestedArrayShape {
 
   // Represents the offset from the last _parent array_ element traversed to
