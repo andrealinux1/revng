@@ -126,12 +126,12 @@ void PointerArithmetic::dump() const {
 
 namespace {
 
-/// The `PointerArithmeticImpl` class is the main helper class used for
+/// The `PointerArithmeticBuilder` class is the main helper class used for
 /// computing the `PointerArithmetic` object starting from the
 /// `PointerToReplace`
-class PointerArithmeticImpl {
+class PointerArithmeticBuilder {
 public:
-  PointerArithmeticImpl() = default;
+  PointerArithmeticBuilder() = default;
 
   // Compute pointer arithmetic for a given `PointerToReplace`
   std::optional<PointerArithmetic>
@@ -214,11 +214,11 @@ std::optional<llvm::APInt> getConstantValue(mlir::Value V) {
 }
 
 // =============================================================================
-// `PointerArithmeticImpl` class methods
+// `PointerArithmeticBuilder` class methods
 // =============================================================================
 
 std::optional<PointerArithmetic>
-PointerArithmeticImpl::computePointerArithmetic(ExpressionOpInterface
+PointerArithmeticBuilder::computePointerArithmetic(ExpressionOpInterface
                                                   PointerToReplace) {
 
   // We skip every non pointer-typed `PointerToReplace`
@@ -255,7 +255,7 @@ PointerArithmeticImpl::computePointerArithmetic(ExpressionOpInterface
 }
 
 std::optional<PointerArithmetic>
-PointerArithmeticImpl::traverse(mlir::Value V) {
+PointerArithmeticBuilder::traverse(mlir::Value V) {
 
   // Every time we find a compatible `Expression`, we traverse it in order to
   // compose its operands
@@ -281,7 +281,7 @@ PointerArithmeticImpl::traverse(mlir::Value V) {
   return createLeafPA(V);
 }
 
-PointerArithmetic PointerArithmeticImpl::createLeafPA(mlir::Value V) {
+PointerArithmetic PointerArithmeticBuilder::createLeafPA(mlir::Value V) {
   PointerArithmetic PA;
   auto VOp = V.getDefiningOp();
 
@@ -314,7 +314,7 @@ PointerArithmetic PointerArithmeticImpl::createLeafPA(mlir::Value V) {
 }
 
 std::optional<PointerArithmetic>
-PointerArithmeticImpl::composeBitcast(CastOp Cast) {
+PointerArithmeticBuilder::composeBitcast(CastOp Cast) {
 
   // Retrieve the `bitcast` single `Operand`, and recursively forward the
   // `PointerArithmetic` produced from it
@@ -322,7 +322,7 @@ PointerArithmeticImpl::composeBitcast(CastOp Cast) {
   return traverse(Operand);
 }
 
-std::optional<PointerArithmetic> PointerArithmeticImpl::composeAdd(AddOp Add) {
+std::optional<PointerArithmetic> PointerArithmeticBuilder::composeAdd(AddOp Add) {
   auto LHS = Add->getOperand(0);
   auto RHS = Add->getOperand(1);
 
@@ -350,7 +350,7 @@ std::optional<PointerArithmetic> PointerArithmeticImpl::composeAdd(AddOp Add) {
 }
 
 std::optional<PointerArithmetic>
-PointerArithmeticImpl::composePtrAdd(PtrAddOp Add) {
+PointerArithmeticBuilder::composePtrAdd(PtrAddOp Add) {
 
   mlir::Value PointerOperand = Add.getPointer();
   mlir::Value OffsetOperand = Add.getOffset();
@@ -382,7 +382,7 @@ PointerArithmeticImpl::composePtrAdd(PtrAddOp Add) {
   return PointerOperandPA;
 }
 
-std::optional<PointerArithmetic> PointerArithmeticImpl::composeMul(MulOp Mul) {
+std::optional<PointerArithmetic> PointerArithmeticBuilder::composeMul(MulOp Mul) {
   auto LHS = Mul.getOperand(0);
   auto RHS = Mul.getOperand(1);
 
@@ -417,7 +417,7 @@ std::optional<PointerArithmetic> PointerArithmeticImpl::composeMul(MulOp Mul) {
 }
 
 std::optional<PointerArithmetic>
-PointerArithmeticImpl::composeShl(ShiftLeftOp Shl) {
+PointerArithmeticBuilder::composeShl(ShiftLeftOp Shl) {
 
   // Handling is similar to `MulOp`, shift by N is multiplication by 2^N
   auto LHS = Shl.getOperand(0);
@@ -447,7 +447,7 @@ PointerArithmeticImpl::composeShl(ShiftLeftOp Shl) {
 }
 
 std::optional<PointerArithmetic>
-PointerArithmeticImpl::mergeArithmetics(const PointerArithmetic &LHS,
+PointerArithmeticBuilder::mergeArithmetics(const PointerArithmetic &LHS,
                                         const PointerArithmetic &RHS) {
 
   PointerArithmetic Result;
@@ -484,7 +484,7 @@ PointerArithmeticImpl::mergeArithmetics(const PointerArithmetic &LHS,
 }
 
 PointerArithmetic
-PointerArithmeticImpl::multiplyByConstant(PointerArithmetic &PA,
+PointerArithmeticBuilder::multiplyByConstant(PointerArithmetic &PA,
                                           const llvm::APInt &Multiplier) {
 
   // Multiply the base offset
@@ -498,7 +498,7 @@ PointerArithmeticImpl::multiplyByConstant(PointerArithmetic &PA,
   return PA;
 }
 
-void PointerArithmeticImpl::sortLinearCombination(PointerArithmetic &PA) {
+void PointerArithmeticBuilder::sortLinearCombination(PointerArithmetic &PA) {
   std::sort(PA.Offset.LinearCombination.begin(),
             PA.Offset.LinearCombination.end(),
             [](const auto &First, const auto &Second) {
@@ -510,6 +510,6 @@ void PointerArithmeticImpl::sortLinearCombination(PointerArithmetic &PA) {
 
 std::optional<PointerArithmetic>
 computePointerArithmetic(mlir::clift::ExpressionOpInterface PointerToReplace) {
-  auto Impl = PointerArithmeticImpl();
+  auto Impl = PointerArithmeticBuilder();
   return Impl.computePointerArithmetic(PointerToReplace);
 }
