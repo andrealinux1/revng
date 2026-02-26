@@ -32,6 +32,8 @@ struct PointerArithmetic {
 
     StridedTerm(llvm::APInt Stride, Index Idx) :
       Stride(std::move(Stride)), Idx(std::move(Idx)) {}
+
+    void dump() const;
   };
 
   /// Represents the offset with possible strided terms in the
@@ -44,6 +46,8 @@ struct PointerArithmetic {
 
     OffsetExpression();
     OffsetExpression(llvm::APInt Offset);
+
+    void dump() const;
   };
 
   /// The base pointer the `PointerArithmetic` is expressed relative to

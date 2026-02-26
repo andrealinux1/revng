@@ -70,6 +70,36 @@ bool PointerArithmetic::verify() const {
   return true;
 }
 
+void PointerArithmetic::StridedTerm::dump() const {
+  Log << "      Stride: ";
+  Log << Stride.getZExtValue() << "\n";
+
+  Log << "      Dynamic Index: ";
+  if (Idx.Variable) {
+    mlir::Value ValueToPrint = Idx.Variable;
+    ValueToPrint.print(*Log.getAsLLVMStream());
+  } else {
+    Log << "(null)";
+  }
+  Log << "\n";
+
+  Log << "      Fixed Offset: ";
+  Log << Idx.Constant.getSExtValue() << "\n";
+}
+
+void PointerArithmetic::OffsetExpression::dump() const {
+  Log << "  Base Offset: ";
+  Log << BaseOffset.getSExtValue() << "\n";
+
+  Log << "  Linear Combinations (" << LinearCombination.size()
+      << " terms):\n";
+
+  for (size_t I = 0; I < LinearCombination.size(); ++I) {
+    Log << "    Term #" << I << ":\n";
+    LinearCombination[I].dump();
+  }
+}
+
 void PointerArithmetic::dump() const {
 
   Log << "Dumping PointerArithmetic object:\n";
@@ -83,30 +113,7 @@ void PointerArithmetic::dump() const {
     Log << "(null)\n";
   }
 
-  Log << "  Base Offset: ";
-  Log << Offset.BaseOffset.getSExtValue() << "\n";
-
-  Log << "  Linear Combinations (" << Offset.LinearCombination.size()
-      << " terms):\n";
-
-  for (size_t I = 0; I < Offset.LinearCombination.size(); ++I) {
-    const auto &Combination = Offset.LinearCombination[I];
-    Log << "    Term #" << I << ":\n";
-    Log << "      Stride: ";
-    Log << Combination.Stride.getZExtValue() << "\n";
-
-    Log << "      Dynamic Index: ";
-    if (Combination.Idx.Variable) {
-      mlir::Value ValueToPrint = Combination.Idx.Variable;
-      ValueToPrint.print(*Log.getAsLLVMStream());
-    } else {
-      Log << "(null)";
-    }
-    Log << "\n";
-
-    Log << "      Fixed Offset: ";
-    Log << Combination.Idx.Constant.getSExtValue() << ")\n";
-  }
+  Offset.dump();
 
   Log << "\n";
   Log.flush();
