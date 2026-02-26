@@ -175,17 +175,6 @@ private:
 // Static helper standalone functions
 // =============================================================================
 
-/// Helper function used to check if the `Value` is a `PointerType`
-static bool isPointerType(mlir::Value V) {
-
-  // If we are in presence of an `ExpressionOp` of pointer type, we return true
-  if (auto Addressof = mlir::dyn_cast_or_null<AddressofOp>(V.getDefiningOp())) {
-    return true;
-  }
-
-  return false;
-}
-
 /// Helper function used to verify if an `ExpressionOpInterface` is
 /// `PointerType`d
 static bool isPointerTypeExpr(ExpressionOpInterface Expr) {
@@ -285,7 +274,7 @@ PointerArithmetic PointerArithmeticBuilder::createLeafPA(mlir::Value V) {
   PointerArithmetic PA;
   auto VOp = V.getDefiningOp();
 
-  if (isPointerType(V)) {
+  if (mlir::dyn_cast_or_null<AddressofOp>(V.getDefiningOp())) {
 
     // Pointer typed expression
     PA.BasePointer = V;
