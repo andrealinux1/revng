@@ -393,11 +393,8 @@ std::optional<PointerArithmetic> PointerArithmeticBuilder::composeMul(MulOp Mul)
     return std::nullopt;
   }
 
-  // Multiply the result and make it numeric
-  auto Result = multiplyByConstant(*VarPA, *Constant);
-  Result.BasePointer = mlir::Value();
-
-  return Result;
+  // Multiply the result (multiplyByConstant also clears BasePointer)
+  return multiplyByConstant(*VarPA, *Constant);
 }
 
 std::optional<PointerArithmetic>
@@ -423,11 +420,8 @@ PointerArithmeticBuilder::composeShl(ShiftLeftOp Shl) {
     return std::nullopt;
   }
 
-  // Multiply the result and make it numeric
-  auto Result = multiplyByConstant(*LHSPA, Multiplier);
-  Result.BasePointer = mlir::Value();
-
-  return Result;
+  // Multiply the result (multiplyByConstant also clears BasePointer)
+  return multiplyByConstant(*LHSPA, Multiplier);
 }
 
 std::optional<PointerArithmetic>
