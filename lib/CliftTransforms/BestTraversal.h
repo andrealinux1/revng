@@ -98,8 +98,8 @@ struct Traversal {
   /// size of the `PointeeType`
   int64_t end() const;
 
-  /// Helper method to obtain all the `Stride`s described by the `Traversal`,
-  /// useful for
+  /// Helper method to obtain all the distinct `Stride`s described by the
+  /// `Traversal`, useful for comparing stride sets between traversals
   std::set<uint64_t> getStrides() const;
 
   /// Helper method used to identify an empty `Traversal` (a `Traversal` which
