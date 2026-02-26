@@ -72,7 +72,7 @@ bool PointerArithmetic::verify() const {
 
 void PointerArithmetic::dump() const {
 
-  Log << "\nDumping PointerArithmetic object:\n";
+  Log << "Dumping PointerArithmetic object:\n";
 
   Log << "  BasePointer: ";
   if (BasePointer) {
