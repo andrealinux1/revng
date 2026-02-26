@@ -27,16 +27,20 @@
 /// capture array index patterns, plus a constant base offset.
 struct PointerArithmetic {
 
+  /// Represents an index with both a variable and a constant component,
+  /// e.g., `array[i+4]`
+  struct Index {
+    mlir::Value Variable;
+    llvm::APInt Constant;
+  };
+
   /// Represents a strided term in the `PointerArithmetic`
   struct StridedTerm {
     llvm::APInt Stride;
+    Index Idx;
 
-    /// We need a `pair` here in order to represent indices with both a constant
-    /// and variable component, e.g., `array[i+4]`
-    std::pair<mlir::Value, llvm::APInt> Index;
-
-    StridedTerm(llvm::APInt Stride, std::pair<mlir::Value, llvm::APInt> Index) :
-      Stride(std::move(Stride)), Index(std::move(Index)) {}
+    StridedTerm(llvm::APInt Stride, Index Idx) :
+      Stride(std::move(Stride)), Idx(std::move(Idx)) {}
   };
 
   /// Represents the offset with possible strided terms in the

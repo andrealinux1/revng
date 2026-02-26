@@ -220,7 +220,7 @@ Replacement Replacement::make(const PointerArithmetic &Arithmetic,
       const auto &LinearCombination = LeftoverOffset.LinearCombination;
       if (not LinearCombination.empty()
           and LinearCombination.front().Stride == CurrentArray.Stride) {
-        DynamicElementId = LeftoverOffset.LinearCombination.front().Index.first;
+        DynamicElementId = LeftoverOffset.LinearCombination.front().Idx.Variable;
         LeftoverOffset.LinearCombination
           .erase(LeftoverOffset.LinearCombination.begin());
       }
@@ -437,7 +437,7 @@ void Replacement::replace(ExpressionOpInterface PointerToReplace,
       // Multiply stride by index
       auto IndexValue = Builder.create<ImmediateOp>(PointerToReplaceLoc,
                                                     IntegerType,
-                                                    Term.Index.second
+                                                    Term.Idx.Constant
                                                       .getSExtValue());
       auto StrideValue = Builder
                            .create<ImmediateOp>(PointerToReplaceLoc,

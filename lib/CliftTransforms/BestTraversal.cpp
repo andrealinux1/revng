@@ -1053,7 +1053,7 @@ BestTraversalChooser::getExplicitArithmetic(const PointerArithmetic &Arithmetic,
       if (Stride == WorkingArithmetic.Offset.LinearCombination.front().Stride) {
         IndexVariableComponent = WorkingArithmetic.Offset.LinearCombination
                                    .front()
-                                   .Index.first;
+                                   .Idx.Variable;
         WorkingArithmetic.Offset.LinearCombination
           .erase(WorkingArithmetic.Offset.LinearCombination.begin());
       }

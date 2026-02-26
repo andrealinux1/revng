@@ -96,8 +96,8 @@ void PointerArithmetic::dump() const {
     Log << Combination.Stride.getZExtValue() << "\n";
 
     Log << "      Dynamic Index: ";
-    if (Combination.Index.first) {
-      mlir::Value ValueToPrint = Combination.Index.first;
+    if (Combination.Idx.Variable) {
+      mlir::Value ValueToPrint = Combination.Idx.Variable;
       ValueToPrint.print(*Log.getAsLLVMStream());
     } else {
       Log << "(null)";
@@ -105,7 +105,7 @@ void PointerArithmetic::dump() const {
     Log << "\n";
 
     Log << "      Fixed Offset: ";
-    Log << Combination.Index.second.getSExtValue() << ")\n";
+    Log << Combination.Idx.Constant.getSExtValue() << ")\n";
   }
 
   Log << "\n";
@@ -297,10 +297,9 @@ PointerArithmetic PointerArithmeticImpl::createLeafPA(mlir::Value V) {
 
       // Generic offset expression - strided 1 term
       PA.Offset = PointerArithmetic::OffsetExpression(llvm::APInt(64, 0));
-      PA.Offset.LinearCombination.emplace_back(llvm::APInt(64, 1),
-                                               std::make_pair(V,
-                                                              llvm::APInt(64,
-                                                                          0)));
+      PA.Offset.LinearCombination.emplace_back(
+        llvm::APInt(64, 1),
+        PointerArithmetic::Index{ V, llvm::APInt(64, 0) });
     }
   }
 
