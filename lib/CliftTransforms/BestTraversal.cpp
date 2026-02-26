@@ -68,8 +68,8 @@ static uint64_t getTypeSize(mlir::Type Type) {
 /// used to store the `array` traversal into the `Traversal` class. The
 /// re-ordering in descending `Stride` order is provided by the comparison
 /// operator of `ArrayShape`
-static std::set<ArrayShape> arrayPathToSet(const ArrayPath &Path) {
-  std::set<ArrayShape> Result;
+static std::multiset<ArrayShape> arrayPathToSet(const ArrayPath &Path) {
+  std::multiset<ArrayShape> Result;
   for (const NestedArrayShape &Nested : Path) {
     ArrayShape Shape;
     Shape.NumElements = Nested.NumElements;

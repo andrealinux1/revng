@@ -82,11 +82,11 @@ struct Traversal {
   /// The ID/Offset of each traversed `union`/`struct` field
   std::vector<uint32_t> TraversedFields;
 
-  /// This sorted set contains the `ArrayShape` describing the array traversals,
-  /// ordered in descending order by `Stride` size (operator `<` on the
-  /// `ArrayShape`). There can be consecutive `ArrayShape` with the same
+  /// This sorted multiset contains the `ArrayShape` describing the array
+  /// traversals, ordered in descending order by `Stride` size (operator `<` on
+  /// the `ArrayShape`). There can be consecutive `ArrayShape`s with the same
   /// `Stride`, to allow to express e.g., `int array[1][1]`.
-  std::set<ArrayShape> TraversedArrays;
+  std::multiset<ArrayShape> TraversedArrays;
 
   /// Total depth described by this `Traversal` (fields + array elements)
   long depth() const;
