@@ -5,6 +5,5 @@
 //
 
 #include "revng/Clift/Clift.h"
-#include "revng/Support/CTarget.h"
 
 mlir::LogicalResult emitFieldAccesses(mlir::clift::FunctionOp Function);
