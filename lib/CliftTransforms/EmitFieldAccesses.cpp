@@ -48,7 +48,7 @@ mlir::LogicalResult emitFieldAccessesImpl(clift::FunctionOp Function) {
 
   Function->walk([&TraversalInfoMap](clift::ExpressionOpInterface Op) {
     // 1. We inspect all the `ExpressionOp`s in the current `Function`
-    auto PA = computePointerArithmetic(Op);
+    std::optional<PointerArithmetic> PA = computePointerArithmetic(Op);
 
     // The `PointerArithmetic` returned object could be empty at the moment of
     // return, and this is a signal that we could not compute a
