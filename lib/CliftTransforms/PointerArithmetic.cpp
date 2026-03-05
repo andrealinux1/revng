@@ -267,7 +267,11 @@ PointerArithmetic PointerArithmeticBuilder::createLeaf(mlir::Value V) {
   auto VOp = V.getDefiningOp();
 
   using OffsetExpression = PointerArithmetic::OffsetExpression;
-  if (mlir::dyn_cast_or_null<AddressofOp>(V.getDefiningOp())) {
+  // if (mlir::dyn_cast_or_null<AddressofOp>(V.getDefiningOp())) {
+  if ((VOp
+       and (mlir::isa<ExpressionOpInterface>(VOp)
+            and isPointerTyped(mlir::cast<ExpressionOpInterface>(VOp))))
+      or (mlir::isa<mlir::BlockArgument>(V))) {
 
     // Pointer typed expression
     PA.BasePointer = V;
