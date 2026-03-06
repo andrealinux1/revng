@@ -131,7 +131,7 @@ private:
   std::optional<PointerArithmetic> traverse(mlir::Value V);
 
   // Return the `PointerArithmetic` for the leaf nodes
-  PointerArithmetic createLeafPA(mlir::Value V);
+  PointerArithmetic createLeaf(mlir::Value V);
 
   // Methods which are used to compose the currently computed
   // `PointerArithmetic` with different `clift` `Operation`s that want to
@@ -247,10 +247,10 @@ PointerArithmeticBuilder::traverse(mlir::Value V) {
   }
 
   // If we do not traverse V, we create the leaf
-  return createLeafPA(V);
+  return createLeaf(V);
 }
 
-PointerArithmetic PointerArithmeticBuilder::createLeafPA(mlir::Value V) {
+PointerArithmetic PointerArithmeticBuilder::createLeaf(mlir::Value V) {
   PointerArithmetic PA;
   auto VOp = V.getDefiningOp();
 

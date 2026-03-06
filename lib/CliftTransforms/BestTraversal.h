@@ -69,7 +69,7 @@ struct Traversal {
   int64_t LeftoverOffset;
 
   /// The ID/Offset of each traversed `union`/`struct` field
-  std::vector<uint32_t> TraversedFields;
+  std::vector<uint64_t> TraversedFields;
 
   /// This sorted `multiset` contains the `ArrayShape` describing the array
   /// traversals, ordered in descending order by `Stride` size (operator `<` on
@@ -92,9 +92,9 @@ struct Traversal {
   /// `Traversal`, useful for comparing stride sets between `Traversal`s
   std::set<uint64_t> getStrides() const;
 
-  /// Helper method used to identify an empty `Traversal` (a `Traversal` which
+  /// Helper method used to identify a shallow `Traversal` (a `Traversal` which
   /// does not involve any traversed struct field or array)
-  bool empty() const;
+  bool isShallow() const;
 
   /// Debug `dump` method used to provide a textual representation on the logger
   /// of the `Traversal`

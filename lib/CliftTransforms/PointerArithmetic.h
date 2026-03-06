@@ -12,6 +12,7 @@
 #include "mlir/IR/Value.h"
 
 #include "revng/Clift/Clift.h"
+#include "revng/Support/Debug.h"
 
 /// Represents a pointer-typed expression decomposed into a `BasePointer` and an
 /// `Offset` expression. The offset is a constant `BaseOffset`, plus a linear
@@ -33,7 +34,7 @@ struct PointerArithmetic {
     StridedTerm(llvm::APInt Stride, Index Idx) :
       Stride(std::move(Stride)), Idx(std::move(Idx)) {}
 
-    void dump() const;
+    void dump() const debug_function;
   };
 
   /// Represents the offset with possible strided terms in the
@@ -49,7 +50,7 @@ struct PointerArithmetic {
     OffsetExpression();
     OffsetExpression(llvm::APInt Offset);
 
-    void dump() const;
+    void dump() const debug_function;
   };
 
   /// The base pointer the `PointerArithmetic` is expressed relative to
@@ -69,7 +70,7 @@ struct PointerArithmetic {
   bool verify() const;
 
   /// Dump method
-  void dump() const;
+  void dump() const debug_function;
 };
 
 /// `PointerArithmetic` computation function entrypoint

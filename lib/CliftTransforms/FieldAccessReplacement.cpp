@@ -235,13 +235,10 @@ Replacement Replacement::make(const PointerArithmetic &Arithmetic,
 void Replacement::replace(ExpressionOpInterface PointerToReplace,
                           const PointerArithmetic &Arithmetic) const {
 
-  // TODO: We need the `PointerSize` in order to generate the `ImmediateOp`s
-  //       used       to access the `struct` fields and `array` members, and to
-  //       generate the `AddressOp` at the end of the field access substitution.
-  //       We extract it from the `PointerToReplace` we are processing, since
-  //       the information is not yet stored in the `mlir` module. In the
-  //       future, if the `PointerSize` is encapsuled in the `mlir` module, we
-  //       should use that source of information.
+  // We need the `PointerSize` in order to generate the `ImmediateOp`s used to
+  // access the `struct` fields and `array` members, and to generate the
+  // `AddressOp` at the end of the field access substitution. We extract it
+  // from the `PointerToReplace` we are processing.
   auto PointerSize = PointerToReplace->getResult(0)
                        .getType()
                        .cast<PointerType>()

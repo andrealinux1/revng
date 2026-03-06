@@ -23,36 +23,7 @@ namespace {
 
 /// Helper function used to retrieve the byte size of any `mlir::Type`
 static uint64_t getTypeSize(mlir::Type Type) {
-  if (auto PrimitiveType = Type.dyn_cast<clift::PrimitiveType>()) {
-    return PrimitiveType.getByteSize();
-  }
-
-  if (auto PointerType = Type.dyn_cast<clift::PointerType>()) {
-    return PointerType.getByteSize();
-  }
-
-  if (auto ArrayType = Type.dyn_cast<clift::ArrayType>()) {
-    return ArrayType.getByteSize();
-  }
-
-  if (auto StructType = Type.dyn_cast<clift::StructType>()) {
-    return StructType.getSize();
-  }
-
-  if (auto UnionType = Type.dyn_cast<clift::UnionType>()) {
-    return UnionType.getSize();
-  }
-
-  if (auto EnumType = Type.dyn_cast<clift::EnumType>()) {
-    return EnumType.getByteSize();
-  }
-
-  if (auto TypedefType = Type.dyn_cast<clift::TypedefType>()) {
-    return TypedefType.getByteSize();
-  }
-
-  // Abort if we encounter an unexpected type here
-  revng_abort();
+  return mlir::cast<clift::ValueType>(Type).getByteSize();
 }
 
 /// Helper function which converts a generic `ArrayPath` to a compatible form
@@ -180,7 +151,7 @@ std::set<uint64_t> Traversal::getStrides() const {
   return Strides;
 }
 
-bool Traversal::empty() const {
+bool Traversal::isShallow() const {
   return TraversedFields.empty() and TraversedArrays.empty();
 }
 
@@ -287,7 +258,7 @@ private:
   };
 
   // Helper function to get the distance to a common ancestor
-  long getDistanceToNode(LatticeNode From, LatticeNode To) {
+  uint64_t getDistanceToNode(LatticeNode From, LatticeNode To) {
     auto Ancestors = getAncestors(From);
 
     // We walk up the list of ancenstors counting the steps
@@ -298,7 +269,7 @@ private:
 
     // In case we found no path from `From` to `To` we return a placeholder
     // value
-    return std::numeric_limits<long>::max();
+    return std::numeric_limits<uint64_t>::max();
   }
 
   // Helper method which returns the ordered list of `Ancestor`s of a
@@ -365,7 +336,7 @@ private:
   }
 
 public:
-  long getTypeDistance(mlir::Type LHS, mlir::Type RHS) {
+  uint64_t getTypeDistance(mlir::Type LHS, mlir::Type RHS) {
     // Classify both types
     LatticeNode LHSNode = classifyType(LHS);
     LatticeNode RHSNode = classifyType(RHS);
@@ -374,7 +345,7 @@ public:
     LatticeNode LCA = findLCA(LHSNode, RHSNode);
 
     // Distance is defined as the number of upward steps from LHS to LCA
-    long Distance = getDistanceToNode(LHSNode, LCA);
+    uint64_t Distance = getDistanceToNode(LHSNode, LCA);
 
     return Distance;
   }
@@ -388,7 +359,7 @@ public:
 /// extended with enums and pointers. Typdefs are ignored. In such case, we
 /// employ the `TypeDistanceLatticeCompute` helper class to perform the
 /// computation.
-static long typeDistance(mlir::Type LHS, mlir::Type RHS) {
+static uint64_t typeDistance(mlir::Type LHS, mlir::Type RHS) {
 
   // First, unwrap any typedefs as they should be traversed in order to reach
   // the underlying type
@@ -401,19 +372,12 @@ static long typeDistance(mlir::Type LHS, mlir::Type RHS) {
 
   // If sizes differ, the `TypeDistance` is infinity
   if (getTypeSize(LHS) != getTypeSize(RHS)) {
-    return std::numeric_limits<long>::max();
+    return std::numeric_limits<uint64_t>::max();
   }
 
-  // Check if both are _scalars_, as defined on the lattice (`primitive`, `enum`
-  // or `pointer`)
-  bool LHSIsScalar = LHS.isa<PrimitiveType>() || LHS.isa<EnumType>()
-                     || LHS.isa<PointerType>();
-  bool RHSIsScalar = RHS.isa<PrimitiveType>() || RHS.isa<EnumType>()
-                     || RHS.isa<PointerType>();
-
   // If only one is _scalar_, the distance is defined as infinity
-  if (!LHSIsScalar || !RHSIsScalar) {
-    return std::numeric_limits<long>::max();
+  if (!isScalarType(LHS) || !isScalarType(RHS)) {
+    return std::numeric_limits<uint64_t>::max();
   }
 
   // If they're exactly the same type, `TypeDistance` is 0
@@ -446,7 +410,7 @@ struct Score {
   bool Valid;
   long StartDistance;
   SizeRelation SizeRelation;
-  long TypeDistance;
+  uint64_t TypeDistance;
   long CommonStrides;
   long Depth;
 
@@ -464,7 +428,8 @@ Score Score::invalid() {
                 .Depth = 0 };
 }
 
-/// We redefine the spaceship operator in order to
+/// We redefine the spaceship operator in order to define the ordering criteria
+/// for comparing `Score`s, which drives the selection of the `BestTraversal`
 std::strong_ordering Score::operator<=>(const Score &Other) {
 
   // An `Invalid` field must be considered `greater` than a `Valid` one
@@ -518,7 +483,8 @@ static Score score(const Traversal &Explicit, const Traversal &Candidate) {
   auto ExplicitStrides = Explicit.getStrides();
   auto CandidateStrides = Candidate.getStrides();
   long CommonStrides = commonPrefixStrides(ExplicitStrides, CandidateStrides);
-  long TypeDistValue = typeDistance(Explicit.TargetType, Candidate.TargetType);
+  uint64_t TypeDistValue = typeDistance(Explicit.TargetType,
+                                        Candidate.TargetType);
 
   if (StartDistance < 0) {
 
@@ -634,8 +600,8 @@ private:
                     std::vector<Traversal> &Traversals,
                     std::vector<ArrayPath> &ArrayPaths,
                     int64_t CurrentOffset = 0,
-                    std::vector<uint32_t> FieldPath = {},
-                    ArrayPath CurrentArrayPath = {});
+                    const std::vector<uint64_t> &FieldPath = {},
+                    const ArrayPath &CurrentArrayPath = {});
 };
 
 const std::vector<Traversal> &
@@ -673,8 +639,7 @@ TypeTraversalAnalyzer::getTraversalRange(mlir::Type BaseType,
     return { Traversals.begin(), Traversals.end() };
   }
 
-  revng_assert(not SmartLookup, "Fast lookup not implemented");
-  revng_abort("Not reachable path");
+  revng_abort("Fast lookup not implemented");
 }
 
 llvm::DenseMap<mlir::Type, TraversalInfo>::iterator
@@ -715,15 +680,16 @@ void TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
                                          std::vector<Traversal> &Traversals,
                                          std::vector<ArrayPath> &ArrayPaths,
                                          int64_t CurrentOffset,
-                                         std::vector<uint32_t> FieldPath,
-                                         ArrayPath CurrentArrayPath) {
+                                         const std::vector<uint64_t> &FieldPath,
+                                         const ArrayPath &CurrentArrayPath) {
+
+  // We should never reach a type with zero size - if we do, it means there is
+  // something severely wrong in the types we're working with
+  revng_assert(getTypeSize(Type) > 0);
 
   if (auto PrimitiveType = Type.dyn_cast<clift::PrimitiveType>()) {
 
     // `PrimitiveType` is a leaf node in our traversal
-    if (PrimitiveType.getByteSize() == 0)
-      return;
-
     Traversal T;
     T.TargetType = PrimitiveType;
     T.StartOffset = CurrentOffset;
@@ -767,9 +733,6 @@ void TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
     uint64_t NumElements = ArrayType.getElementsCount();
     uint64_t ElementSize = ElementType.getByteSize();
 
-    if (ElementSize == 0)
-      return;
-
     // Add this array to the current array path
     NestedArrayShape ArrayInfo;
     ArrayInfo.OffsetFromParentArrayElement = 0;
@@ -805,20 +768,14 @@ void TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
   // Traverse the `struct`
   if (auto StructType = Type.dyn_cast<clift::StructType>()) {
 
-    // Only traverse if the `struct` is complete (has a definition)
-    if (!StructType.isComplete())
-      return;
-
     // Add the `Traversal` for the `struct` itself
-    if (StructType.getSize() > 0) {
-      Traversal T;
-      T.TargetType = StructType;
-      T.StartOffset = CurrentOffset;
-      T.LeftoverOffset = 0;
-      T.TraversedFields = FieldPath;
-      T.TraversedArrays = arrayPathToSet(CurrentArrayPath);
-      Traversals.push_back(T);
-    }
+    Traversal T;
+    T.TargetType = StructType;
+    T.StartOffset = CurrentOffset;
+    T.LeftoverOffset = 0;
+    T.TraversedFields = FieldPath;
+    T.TraversedArrays = arrayPathToSet(CurrentArrayPath);
+    Traversals.push_back(T);
 
     // Traverse each field
     llvm::ArrayRef<clift::FieldAttr> Fields = StructType.getFields();
@@ -827,8 +784,8 @@ void TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
       clift::ValueType FieldType = Field.getType();
       int64_t FieldOffset = CurrentOffset + Field.getOffset();
 
-      std::vector<uint32_t> NewFieldPath = FieldPath;
-      NewFieldPath.push_back(static_cast<uint32_t>(I));
+      std::vector<uint64_t> NewFieldPath = FieldPath;
+      NewFieldPath.push_back(static_cast<uint64_t>(I));
 
       traverseImpl(FieldType.cast<mlir::Type>(),
                    Traversals,
@@ -843,20 +800,14 @@ void TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
   // Traverse the `union`
   if (auto UnionType = Type.dyn_cast<clift::UnionType>()) {
 
-    // Only traverse if the `union` is complete (has definition)
-    if (!UnionType.isComplete())
-      return;
-
     // Add `Traversal` for the `union` itself
-    if (UnionType.getSize() > 0) {
-      Traversal T;
-      T.TargetType = UnionType;
-      T.StartOffset = CurrentOffset;
-      T.LeftoverOffset = 0;
-      T.TraversedFields = FieldPath;
-      T.TraversedArrays = arrayPathToSet(CurrentArrayPath);
-      Traversals.push_back(T);
-    }
+    Traversal T;
+    T.TargetType = UnionType;
+    T.StartOffset = CurrentOffset;
+    T.LeftoverOffset = 0;
+    T.TraversedFields = FieldPath;
+    T.TraversedArrays = arrayPathToSet(CurrentArrayPath);
+    Traversals.push_back(T);
 
     // For `union`s, all their fields start at the same `Offset`
     llvm::ArrayRef<clift::FieldAttr> Fields = UnionType.getFields();
@@ -867,8 +818,8 @@ void TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
       // `union` fields all start at `CurrentOffset`
       int64_t FieldOffset = CurrentOffset;
 
-      std::vector<uint32_t> NewFieldPath = FieldPath;
-      NewFieldPath.push_back(static_cast<uint32_t>(I));
+      std::vector<uint64_t> NewFieldPath = FieldPath;
+      NewFieldPath.push_back(static_cast<uint64_t>(I));
 
       traverseImpl(FieldType.cast<mlir::Type>(),
                    Traversals,
@@ -887,15 +838,13 @@ void TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
     clift::ValueType UnderlyingType = EnumType.getUnderlyingType();
 
     // Add traversal for the `enum` itself
-    if (EnumType.getByteSize() > 0) {
-      Traversal T;
-      T.TargetType = EnumType;
-      T.StartOffset = CurrentOffset;
-      T.LeftoverOffset = 0;
-      T.TraversedFields = FieldPath;
-      T.TraversedArrays = arrayPathToSet(CurrentArrayPath);
-      Traversals.push_back(T);
-    }
+    Traversal T;
+    T.TargetType = EnumType;
+    T.StartOffset = CurrentOffset;
+    T.LeftoverOffset = 0;
+    T.TraversedFields = FieldPath;
+    T.TraversedArrays = arrayPathToSet(CurrentArrayPath);
+    Traversals.push_back(T);
 
     // Also traverse into the underlying type inside the `enum
     traverseImpl(UnderlyingType.cast<mlir::Type>(),
@@ -914,6 +863,10 @@ void TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
 
 /// `BestTraversalChooser` is used as a compute class for the `BestTraversal`
 class BestTraversalChooser {
+private:
+  /// The `TypeTraversalAnalyzer` is our `Traversal` and `ArrayPath` oracle
+  TypeTraversalAnalyzer TraversalAnalyzer;
+
 public:
   /// We need an explicit constructor in order to propagate the
   /// `TraversalInfoMap` which is used as a global cache for storing
@@ -928,9 +881,6 @@ public:
                        const PointerArithmetic &Arithmetic);
 
 private:
-  /// The `TypeTraversalAnalyzer` is our `Traversal` and `ArrayPath` oracle
-  TypeTraversalAnalyzer TraversalAnalyzer;
-
   /// Obtain the explicit rewrite of the constant folded portion of
   /// `Arithmetic`, following an array traversal described by `ArrayPath`, so
   /// that it is evident in the `LinearCombination` component of `Arithmetic`
@@ -962,7 +912,7 @@ BestTraversalChooser::computeBestTraversal(ExpressionOpInterface
                                              &Arithmetic) {
   // We only perform the substitution for `PointerType`
   auto PointerToReplaceType = PointerToReplace->getResult(0).getType();
-  if (not PointerToReplaceType.isa<PointerType>()) {
+  if (not isPointerType(PointerToReplaceType)) {
     return std::nullopt;
   }
 
@@ -1002,7 +952,7 @@ BestTraversalChooser::computeBestTraversal(ExpressionOpInterface
   // In case we end up with a `BestTraversal` which does not actually traverse
   // any `struct` field or `array` element, we avoid the rewriting altogether,
   // and we leave the explicit pointer arithmetic access in `clift`
-  if (BestTraversal->empty()) {
+  if (BestTraversal->isShallow()) {
     return std::nullopt;
   }
 
