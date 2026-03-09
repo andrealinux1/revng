@@ -16,6 +16,18 @@ using namespace mlir::clift;
 
 namespace {
 
+/// Helper to unwrap a `clift` `Type` from a potential `PointerType` wrapper,
+/// returning the unwrapped `Type` and whether indirection was needed
+template<typename CliftType>
+static std::pair<CliftType, bool>
+getAccessedTypeInfo(mlir::Value CurrentValue) {
+  if (isPointerType(CurrentValue.getType())) {
+    auto PtrType = getPointerType(CurrentValue.getType());
+    return { dealias(PtrType.getPointeeType()).cast<CliftType>(), true };
+  }
+  return { dealias(CurrentValue.getType()).cast<CliftType>(), false };
+}
+
 // =============================================================================
 // `Replacement` struct definition
 // =============================================================================
@@ -35,10 +47,13 @@ struct Replacement {
       Array
     } TheKind;
 
-    // We need to have the possibility to represent and `Index` with both a
+    // We need to have the possibility to represent an `Index` with both a
     // constant and a variable component (in order to represent access like
     // `[i + 4]`)
-    std::pair<mlir::Value, uint64_t> Index;
+    struct IndexInfo {
+      mlir::Value Variable;
+      uint64_t Constant;
+    } Index;
   };
 
   /// We store the sequence of needed `FieldAccess`es here
@@ -66,13 +81,18 @@ struct Replacement {
 Replacement Replacement::make(const PointerArithmetic &Arithmetic,
                               const Traversal &BestTraversal) {
 
+  // Recover the `PointerBitSize` from the computed `PointerArithmetic`, so we
+  // have centralized place for computing it
+  unsigned PointerBitSize = Arithmetic.PointerBitSize;
+
   auto BasePtrType = getPointerType(Arithmetic.BasePointer.getType());
   auto BaseType = BasePtrType.getPointeeType();
 
   // Start with an empty `Replacement` object, which will be populated in this
   // routine
-  Replacement Result;
-  Result.LeftoverOffset.BaseOffset = llvm::APInt(64, 0);
+  Replacement Result = {
+    .LeftoverOffset = PointerArithmetic::OffsetExpression(PointerBitSize)
+  };
 
   // Copy the starting `BestTraversal` and `Offset`, we will consume them in the
   // current phase
@@ -86,10 +106,13 @@ Replacement Replacement::make(const PointerArithmetic &Arithmetic,
   // produced in the `PointerArithmetic` during phase 1
   PointerArithmetic::OffsetExpression LeftoverOffset = Arithmetic.Offset;
 
-  // We go over each component in the select `Traversal` and build the
-  // `Replacement`
-  while (LeftoverTraversal.TraversedFields.size() != 0
-         or LeftoverTraversal.TraversedArrays.size() != 0) {
+  // We perform an iterator-based traversal of the fields, going over each
+  // component in the selected `Traversal` and building the `Replacement`
+  auto FieldIt = LeftoverTraversal.TraversedFields.begin();
+  auto FieldEnd = LeftoverTraversal.TraversedFields.end();
+  auto ArrayIt = LeftoverTraversal.TraversedArrays.begin();
+  auto ArrayEnd = LeftoverTraversal.TraversedArrays.end();
+  while (FieldIt != FieldEnd or ArrayIt != ArrayEnd) {
 
     // Inspect the `TypedefType` and cast to a known `clift` `Type`
     if (auto TypedefType = BaseType.dyn_cast<clift::TypedefType>()) {
@@ -103,78 +126,22 @@ Replacement Replacement::make(const PointerArithmetic &Arithmetic,
       revng_abort("Invalid type in traversal");
     }
 
-    // Inspect the `struct`
-    if (auto StructType = BaseType.dyn_cast<clift::StructType>()) {
+    // Inspect `struct` or `union` (both implement ClassType)
+    if (auto ClassType = mlir::dyn_cast<clift::ClassType>(BaseType)) {
 
-      // We consume the traversed `struct`
-      unsigned FieldIndex = LeftoverTraversal.TraversedFields.front();
-      LeftoverTraversal.TraversedFields
-        .erase(LeftoverTraversal.TraversedFields.begin());
+      auto Kind = BaseType.isa<clift::StructType>() ? FieldAccessInfo::Struct :
+                                                      FieldAccessInfo::Union;
+      unsigned FieldIndex = *FieldIt++;
 
-      Result.FieldAccesses.push_back({ .TheKind = FieldAccessInfo::Struct,
-                                       .Index = std::make_pair(mlir::Value(),
-                                                               FieldIndex) });
+      Result.FieldAccesses.push_back({ .TheKind = Kind,
+                                       .Index = { mlir::Value(),
+                                                  FieldIndex } });
 
-      // Move to the field's type
-      llvm::ArrayRef<FieldAttr> Fields = StructType.getFields();
-
-      // Find field by offset
-      unsigned Index = 0;
-      bool Consumed = false;
-      for (const FieldAttr &Field : Fields) {
-        if (Index == FieldIndex) {
-          BaseType = Field.getType().cast<mlir::Type>();
-
-          // Subtract the `Offset` of the field we are traversing from the
-          // `LeftoverOffset` `BaseOffset`, in order to take into account the
-          // portion of the `LeftoverOffset` we are consuming in this step
-          LeftoverOffset.BaseOffset -= Field.getOffset();
-          Consumed = true;
-          break;
-        }
-
-        Index++;
-      }
-
-      // We assert that at least one of the fields is consumed, meaning that we
-      // found the field we were searching for
-      revng_assert(Consumed);
-
-      continue;
-    }
-
-    // Inspect the `union`
-    if (auto UnionType = BaseType.dyn_cast<clift::UnionType>()) {
-
-      // We don't need to subtract anything for a `Union`, cause all the fields
-      // always start at 0
-      unsigned FieldIndex = LeftoverTraversal.TraversedFields.front();
-      LeftoverTraversal.TraversedFields
-        .erase(LeftoverTraversal.TraversedFields.begin());
-
-      Result.FieldAccesses.push_back({ .TheKind = FieldAccessInfo::Union,
-                                       .Index = std::make_pair(mlir::Value(),
-                                                               FieldIndex) });
-
-      // Move to the field's type
-      llvm::ArrayRef<FieldAttr> Fields = UnionType.getFields();
-
-      // Find field by offset
-      unsigned Index = 0;
-      bool Consumed = false;
-      for (const FieldAttr &Field : Fields) {
-        if (Index == FieldIndex) {
-          BaseType = Field.getType().cast<mlir::Type>();
-          Consumed = true;
-          break;
-        }
-
-        Index++;
-      }
-
-      // We assert that at least one of the fields is consumed, meaning that we
-      // found the field we were searching for
-      revng_assert(Consumed);
+      // Look up the field by positional index. Subtract the field's byte
+      // offset from LeftoverOffset (for unions, getOffset() returns 0)
+      const FieldAttr &Field = ClassType.getFields()[FieldIndex];
+      BaseType = Field.getType().cast<mlir::Type>();
+      LeftoverOffset.BaseOffset -= Field.getOffset();
 
       continue;
     }
@@ -182,8 +149,7 @@ Replacement Replacement::make(const PointerArithmetic &Arithmetic,
     // Inspect the `array`
     if (auto ArrayType = BaseType.dyn_cast<clift::ArrayType>()) {
 
-      ArrayShape CurrentArray = *LeftoverTraversal.TraversedArrays.begin();
-      LeftoverTraversal.TraversedArrays.erase(CurrentArray);
+      ArrayShape CurrentArray = *ArrayIt++;
 
       // When reaching this iteration, if there was an array traversal in the
       // original traversal with a larger stride than the current, it must have
@@ -195,7 +161,7 @@ Replacement Replacement::make(const PointerArithmetic &Arithmetic,
 
       // We decide if we consume the offset from the `BaseOffset` or the
       // `LinearCombination`
-      llvm::APInt NumFixedConsumedElements = llvm::APInt(64, 0);
+      llvm::APInt NumFixedConsumedElements = llvm::APInt(PointerBitSize, 0);
       if (LeftoverOffset.BaseOffset.uge(CurrentArray.Stride)) {
         NumFixedConsumedElements = LeftoverOffset.BaseOffset
                                      .udiv(CurrentArray.Stride);
@@ -207,17 +173,24 @@ Replacement Replacement::make(const PointerArithmetic &Arithmetic,
       const auto &LinearCombination = LeftoverOffset.LinearCombination;
       if (not LinearCombination.empty()
           and LinearCombination.front().Stride == CurrentArray.Stride) {
-        DynamicElementId = LeftoverOffset.LinearCombination.front()
-                             .Idx.Variable;
+        auto &FrontTerm = LeftoverOffset.LinearCombination.front();
+        DynamicElementId = FrontTerm.Idx.Variable;
+
+        // If the Idx also has a constant component, add it to the fixed
+        // consumed elements count
+        if (FrontTerm.Idx.Constant.getBoolValue()) {
+          NumFixedConsumedElements += FrontTerm.Idx.Constant;
+        }
+
         LeftoverOffset.LinearCombination
           .erase(LeftoverOffset.LinearCombination.begin());
       }
 
       Result.FieldAccesses
         .push_back({ .TheKind = FieldAccessInfo::Array,
-                     .Index = std::make_pair(DynamicElementId,
-                                             NumFixedConsumedElements
-                                               .getSExtValue()) });
+                     .Index = { DynamicElementId,
+                                static_cast<uint64_t>(NumFixedConsumedElements
+                                                        .getZExtValue()) } });
 
       // Move to the `array` element `Type`
       BaseType = ArrayType.getElementType();
@@ -249,7 +222,12 @@ void Replacement::replace(ExpressionOpInterface PointerToReplace,
   mlir::Value CurrentValue = Arithmetic.BasePointer;
 
   // Every new `Operation` created in this phase will retain the `Location` of
-  // the original `PointerToReplace`
+  // the original `PointerToReplace`.
+  // TODO: possible improvement for building the `PointerToReplaceLocation`.
+  //       We could consider merging all the locations of all the
+  //       `ExpressionOp`s that contributed to the computation of the
+  //       `PointerArithmetic`. That would be much more accurate and probably
+  //       give better results.
   mlir::Location PointerToReplaceLoc = PointerToReplace.getLoc();
 
   // Apply each field access in sequence
@@ -258,53 +236,27 @@ void Replacement::replace(ExpressionOpInterface PointerToReplace,
   for (const FieldAccessInfo &Access : FieldAccesses) {
     switch (Access.TheKind) {
     case FieldAccessInfo::Kind::Struct: {
-      auto Index = std::get<uint64_t>(Access.Index);
-      StructType StructType;
-      bool IsIndirectAccess = false;
-
-      // We may need to unwrap the `StructType` from a `PointerType`
-      if (isPointerType(CurrentValue.getType())) {
-        auto StructPtrType = getPointerType(CurrentValue.getType());
-        StructType = dealias(StructPtrType.getPointeeType())
-                       .cast<clift::StructType>();
-        IsIndirectAccess = true;
-      } else {
-        StructType = dealias(CurrentValue.getType()).cast<clift::StructType>();
-        IsIndirectAccess = false;
-      }
-
-      // Emit the field access
-      mlir::Type FieldType = StructType.getFields()[Index].getType();
+      auto Index = Access.Index.Constant;
+      auto [Type,
+            IsIndirect] = getAccessedTypeInfo<clift::StructType>(CurrentValue);
+      mlir::Type FieldType = Type.getFields()[Index].getType();
       CurrentValue = Builder.create<AccessOp>(PointerToReplaceLoc,
                                               FieldType,
                                               CurrentValue,
-                                              IsIndirectAccess,
+                                              IsIndirect,
                                               Index);
       break;
     }
 
     case FieldAccessInfo::Kind::Union: {
-      auto Index = std::get<uint64_t>(Access.Index);
-      UnionType UnionType;
-      bool IsIndirectAccess = false;
-
-      // We may need to unwrap the `UnionType` from a `PointerType`
-      if (isPointerType(CurrentValue.getType())) {
-        auto UnionPtrType = getPointerType(CurrentValue.getType());
-        UnionType = dealias(UnionPtrType.getPointeeType())
-                      .cast<clift::UnionType>();
-        IsIndirectAccess = true;
-      } else {
-        UnionType = dealias(CurrentValue.getType()).cast<clift::UnionType>();
-        IsIndirectAccess = false;
-      }
-
-      // Emit the field access
-      mlir::Type FieldType = UnionType.getFields()[Index].getType();
+      auto Index = Access.Index.Constant;
+      auto [Type,
+            IsIndirect] = getAccessedTypeInfo<clift::UnionType>(CurrentValue);
+      mlir::Type FieldType = Type.getFields()[Index].getType();
       CurrentValue = Builder.create<AccessOp>(PointerToReplaceLoc,
                                               FieldType,
                                               CurrentValue,
-                                              IsIndirectAccess,
+                                              IsIndirect,
                                               Index);
       break;
     }
@@ -313,17 +265,12 @@ void Replacement::replace(ExpressionOpInterface PointerToReplace,
 
       // We may need to unwrap the `ArrayType` from a `PointerType`, and emit
       // the needed `IndirectionOp` and `Decay` cast accordingly
-      ArrayType ArrayType;
-      if (isPointerType(CurrentValue.getType())) {
-        auto ArrayPtrType = getPointerType(CurrentValue.getType());
-        ArrayType = dealias(ArrayPtrType.getPointeeType())
-                      .cast<clift::ArrayType>();
-
+      auto [ArrayType,
+            IsIndirect] = getAccessedTypeInfo<clift::ArrayType>(CurrentValue);
+      if (IsIndirect) {
         // Add the indirection operation
         CurrentValue = Builder.create<IndirectionOp>(PointerToReplaceLoc,
                                                      CurrentValue);
-      } else {
-        ArrayType = dealias(CurrentValue.getType()).cast<clift::ArrayType>();
       }
 
       // In this situation, we need to add a `decay` cast in order to be
@@ -346,8 +293,8 @@ void Replacement::replace(ExpressionOpInterface PointerToReplace,
       // If present, we emit a new `mlir::Value` representing the constant
       // component of the `Index` access. If we do not have a `DynamicIndex`
       // component, we still emit a `imm 0` to represent the access to `[0]`.
-      if (Access.Index.second != 0 or not Access.Index.first) {
-        auto Index = Access.Index.second;
+      if (Access.Index.Constant != 0 or not Access.Index.Variable) {
+        auto Index = Access.Index.Constant;
         auto IntegerType = PrimitiveType::get(Builder.getContext(),
                                               PrimitiveKind::GenericKind,
                                               PointerSize);
@@ -358,8 +305,8 @@ void Replacement::replace(ExpressionOpInterface PointerToReplace,
 
       // If present, we emit a new `mlir::Value` representing the variable
       // component of the `Index` access
-      if (Access.Index.first) {
-        DynamicIndexValue = std::get<mlir::Value>(Access.Index);
+      if (Access.Index.Variable) {
+        DynamicIndexValue = Access.Index.Variable;
       }
 
       // We compose the constant and variable components of the `Index` access

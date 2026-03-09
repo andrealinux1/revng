@@ -53,7 +53,9 @@ clift.func @test_nested_same_stride<!f>() {
 // CHECK: [[ACCESS:%[0-9]+]] = clift.access<indirect 1> [[ADDRESSOF1]]
 // CHECK: [[CAST1:%[0-9]+]] = clift.cast<decay> [[ACCESS]]
 // CHECK: [[IMM1:%[0-9]+]] = clift.imm 0
-// CHECK: [[SUBSCRIPT:%[0-9]+]] = clift.subscript [[CAST1]], [[IMM1]]
-// CHECK: [[ADDRESSOF2:%[0-9]+]] = clift.addressof [[SUBSCRIPT]]
-// CHECK: [[CAST2:%[0-9]+]] = clift.cast<bitcast> [[ADDRESSOF2]]
-// CHECK: clift.yield [[CAST2]]
+// CHECK: [[SUBSCRIPT1:%[0-9]+]] = clift.subscript [[CAST1]], [[IMM1]]
+// CHECK: [[CAST2:%[0-9]+]] = clift.cast<decay> [[SUBSCRIPT1]]
+// CHECK: [[IMM2:%[0-9]+]] = clift.imm 0
+// CHECK: [[SUBSCRIPT2:%[0-9]+]] = clift.subscript [[CAST2]], [[IMM2]]
+// CHECK: [[ADDRESSOF2:%[0-9]+]] = clift.addressof [[SUBSCRIPT2]]
+// CHECK: clift.yield [[ADDRESSOF2]]

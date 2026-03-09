@@ -3,7 +3,9 @@
 //
 #include <compare>
 #include <optional>
+#include <set>
 
+#include "revng/ADT/RecursiveCoroutine.h"
 #include "revng/Clift/Clift.h"
 #include "revng/Support/Assert.h"
 
@@ -30,14 +32,17 @@ static uint64_t getTypeSize(mlir::Type Type) {
 /// used to store the `array` traversal into the `Traversal` class. The
 /// re-ordering in descending `Stride` order is provided by the comparison
 /// operator of `ArrayShape`
-static std::multiset<ArrayShape> arrayPathToSet(const ArrayPath &Path) {
-  std::multiset<ArrayShape> Result;
+static llvm::SmallVector<ArrayShape>
+arrayPathToSortedVector(const ArrayPath &Path) {
+  llvm::SmallVector<ArrayShape> Result;
+  Result.reserve(Path.size());
   for (const NestedArrayShape &Nested : Path) {
     ArrayShape Shape;
     Shape.NumElements = Nested.NumElements;
     Shape.Stride = Nested.Stride;
-    Result.insert(Shape);
+    Result.push_back(Shape);
   }
+  llvm::sort(Result);
   return Result;
 }
 
@@ -76,10 +81,10 @@ static bool isCompatible(const ArrayPath &Path, llvm::APInt BaseOffset) {
 
 /// Helper function which finds all the `ArrayPath`s that are compatible with a
 /// given `BaseOffset`
-static std::vector<const ArrayPath *>
+static llvm::SmallVector<const ArrayPath *>
 findCompatibleArrayPaths(const std::vector<ArrayPath> &AllArrayPaths,
                          const llvm::APInt &BaseOffset) {
-  std::vector<const ArrayPath *> CompatibleArrays;
+  llvm::SmallVector<const ArrayPath *> CompatibleArrays;
   for (const ArrayPath &Path : AllArrayPaths) {
     if (isCompatible(Path, BaseOffset))
       CompatibleArrays.push_back(&Path);
@@ -87,26 +92,19 @@ findCompatibleArrayPaths(const std::vector<ArrayPath> &AllArrayPaths,
   return CompatibleArrays;
 }
 
-/// Helper function which counts the number of common `Stride`s
-static int64_t commonPrefixStrides(const std::set<uint64_t> &LHS,
-                                   const std::set<uint64_t> &RHS) {
+/// Helper function which counts the length of the common prefix between two
+/// sorted `TraversedArrays` vectors. Since both are sorted in descending stride
+/// order, this counts how many leading array shapes match exactly.
+static int64_t commonPrefixStrides(const llvm::ArrayRef<ArrayShape> &LHS,
+                                   const llvm::ArrayRef<ArrayShape> &RHS) {
   int64_t Count = 0;
   auto LIt = LHS.begin();
   auto RIt = RHS.begin();
 
-  // We iterate in parallel on both the LHS and RHS and count the `Strides`
-  // which match in size between both of them. This can be done since the
-  // `Stride`s are in descending order.
-  while (LIt != LHS.end() && RIt != RHS.end()) {
-    if (*LIt == *RIt) {
-      ++Count;
-      ++LIt;
-      ++RIt;
-    } else if (*LIt > *RIt) {
-      ++LIt;
-    } else {
-      ++RIt;
-    }
+  while (LIt != LHS.end() && RIt != RHS.end() && *LIt == *RIt) {
+    ++Count;
+    ++LIt;
+    ++RIt;
   }
 
   return Count;
@@ -141,14 +139,6 @@ int64_t Traversal::begin() const {
 
 int64_t Traversal::end() const {
   return begin() + getTypeSize(TargetType);
-}
-
-std::set<uint64_t> Traversal::getStrides() const {
-  std::set<uint64_t> Strides;
-  for (const auto &Shape : TraversedArrays) {
-    Strides.insert(Shape.Stride);
-  }
-  return Strides;
 }
 
 bool Traversal::isShallow() const {
@@ -207,17 +197,20 @@ namespace {
 ///                       \      /
 ///                        generic
 ///
-/// To compute the distance, we traverse this lattice from LHS to RHS.
-/// Whenever we have to walk upwards, we weight each step upward 1.
+/// TODO: this distance is NOT symmetric. It counts only upward steps from
+///       Explicit to the least common ancestor (LCA) of Explicit and Ideal. For
+///       example, typeDistance(unsigned, number) = 1, but typeDistance(number,
+///       unsigned) = 0. Double check that this is the wanted behavior.
+// Whenever we have to walk upwards, we weight each step upward 1.
 class TypeDistanceLatticeCompute {
 
   // Define lattice node types for classification
   enum class LatticeNode {
-    SpecificEnum,
+    Enum,
     Unsigned,
     Signed,
     Float,
-    SpecificPointer,
+    Pointer,
     Number,
     PointerOrNumber,
     Generic
@@ -246,11 +239,11 @@ private:
     }
 
     if (T.isa<EnumType>()) {
-      return LatticeNode::SpecificEnum;
+      return LatticeNode::Enum;
     }
 
     if (T.isa<PointerType>()) {
-      return LatticeNode::SpecificPointer;
+      return LatticeNode::Pointer;
     }
 
     // Shouldn't reach here given earlier checks
@@ -277,20 +270,18 @@ private:
   std::vector<LatticeNode> getAncestors(LatticeNode N) {
     using LN = LatticeNode;
     switch (N) {
-    case LN::SpecificEnum:
-      return { LN::SpecificEnum,
-               LN::Unsigned,
-               LN::Number,
-               LN::PointerOrNumber,
-               LN::Generic };
+    case LN::Enum:
+      return {
+        LN::Enum, LN::Unsigned, LN::Number, LN::PointerOrNumber, LN::Generic
+      };
     case LN::Unsigned:
       return { LN::Unsigned, LN::Number, LN::PointerOrNumber, LN::Generic };
     case LN::Signed:
       return { LN::Signed, LN::Number, LN::PointerOrNumber, LN::Generic };
     case LN::Number:
       return { LN::Number, LN::PointerOrNumber, LN::Generic };
-    case LN::SpecificPointer:
-      return { LN::SpecificPointer, LN::PointerOrNumber, LN::Generic };
+    case LN::Pointer:
+      return { LN::Pointer, LN::PointerOrNumber, LN::Generic };
     case LN::PointerOrNumber:
       return { LN::PointerOrNumber, LN::Generic };
     case LN::Float:
@@ -304,24 +295,23 @@ private:
   // Helper to find least common ancestor (LCA) in the lattice
   LatticeNode findLCA(LatticeNode A, LatticeNode B) {
 
-    // At this point, `A == B` can only be only in case we have `SpecificEnum`
-    // or `SpecificPointer` (because they are two distinct type of the same
+    // At this point, `A == B` can only be only in case we have `Enum`
+    // or `Pointer` (because they are two distinct type of the same
     // family). Identical primitive type are caught by the `LHS == RHS` early
     // exit check in `typeDistance`.
     if (A == B) {
-      revng_assert(A == LatticeNode::SpecificEnum
-                   or A == LatticeNode::SpecificPointer);
+      revng_assert(A == LatticeNode::Enum or A == LatticeNode::Pointer);
     }
 
     // For each node, its ordered ancestor chain from self to `Generic`
-    // (inclusive). SpecificEnum/SpecificPointer represent *families* of
+    // (inclusive). Enum/Pointer represent *families* of
     // distinct types, so when A == B for these, the LCA is their parent
     // (handled via SameFamily). The
     auto AncestorsA = getAncestors(A);
     auto AncestorsB = getAncestors(B);
     std::set<LatticeNode> SetB(AncestorsB.begin(), AncestorsB.end());
 
-    // When A == B, it can only be `SpecificEnum` or `SpecificPointer`.
+    // When A == B, it can only be `Enum` or `Pointer`.
     // In that case, skip self and start from the parent.
     size_t StartIdx = (A == B) ? 1 : 0;
     for (size_t I = StartIdx; I < AncestorsA.size(); ++I) {
@@ -336,16 +326,18 @@ private:
   }
 
 public:
-  uint64_t getTypeDistance(mlir::Type LHS, mlir::Type RHS) {
+  uint64_t getTypeDistance(mlir::Type Explicit, mlir::Type Ideal) {
+
     // Classify both types
-    LatticeNode LHSNode = classifyType(LHS);
-    LatticeNode RHSNode = classifyType(RHS);
+    LatticeNode ExplicitNode = classifyType(Explicit);
+    LatticeNode IdealNode = classifyType(Ideal);
 
     // Find their least common ancestor (LCA)
-    LatticeNode LCA = findLCA(LHSNode, RHSNode);
+    LatticeNode LCA = findLCA(ExplicitNode, IdealNode);
 
-    // Distance is defined as the number of upward steps from LHS to LCA
-    uint64_t Distance = getDistanceToNode(LHSNode, LCA);
+    // Distance is defined as the number of upward steps from `ExplicitNode` to
+    // LCA
+    uint64_t Distance = getDistanceToNode(ExplicitNode, LCA);
 
     return Distance;
   }
@@ -356,39 +348,39 @@ public:
 /// If the sizes of the input types differ, this distance is just "infinity". If
 /// the inputs are not scalar, this distance is also "infinity". If they're both
 /// scalars we should use the lattice approach, based on the primitives but
-/// extended with enums and pointers. Typdefs are ignored. In such case, we
+/// extended with enums and pointers. `Typedef`s are ignored. In such case, we
 /// employ the `TypeDistanceLatticeCompute` helper class to perform the
 /// computation.
-static uint64_t typeDistance(mlir::Type LHS, mlir::Type RHS) {
+static uint64_t typeDistance(mlir::Type Explicit, mlir::Type Ideal) {
 
   // First, unwrap any typedefs as they should be traversed in order to reach
   // the underlying type
-  while (auto TypedefLHS = LHS.dyn_cast<TypedefType>()) {
-    LHS = TypedefLHS.getUnderlyingType().cast<mlir::Type>();
+  while (auto TypedefExplicit = Explicit.dyn_cast<TypedefType>()) {
+    Explicit = TypedefExplicit.getUnderlyingType().cast<mlir::Type>();
   }
-  while (auto TypedefRHS = RHS.dyn_cast<TypedefType>()) {
-    RHS = TypedefRHS.getUnderlyingType().cast<mlir::Type>();
+  while (auto TypedefIdeal = Ideal.dyn_cast<TypedefType>()) {
+    Ideal = TypedefIdeal.getUnderlyingType().cast<mlir::Type>();
   }
 
   // If sizes differ, the `TypeDistance` is infinity
-  if (getTypeSize(LHS) != getTypeSize(RHS)) {
+  if (getTypeSize(Explicit) != getTypeSize(Ideal)) {
     return std::numeric_limits<uint64_t>::max();
   }
 
   // If only one is _scalar_, the distance is defined as infinity
-  if (!isScalarType(LHS) || !isScalarType(RHS)) {
+  if (!isScalarType(Explicit) || !isScalarType(Ideal)) {
     return std::numeric_limits<uint64_t>::max();
   }
 
   // If they're exactly the same type, `TypeDistance` is 0
-  if (LHS == RHS) {
+  if (Explicit == Ideal) {
     return 0;
   }
 
   // In all the other cases, we compute the `TypeDistance` using an ad-hoc
   // lattice
   TypeDistanceLatticeCompute TDC;
-  return TDC.getTypeDistance(LHS, RHS);
+  return TDC.getTypeDistance(Explicit, Ideal);
 }
 
 // =============================================================================
@@ -473,18 +465,16 @@ std::strong_ordering Score::operator<=>(const Score &Other) {
 }
 
 /// The `score` function is used in order to obtain a _similarity_ `Score`
-/// between the `Explicit` and `Candidate` `Traversal`s. We want to select the
+/// between the `Explicit` and `Ideal` `Traversal`s. We want to select the
 /// `Traversal` with the minimal score as the one that will constitute the
 /// pointer access rewrite
-static Score score(const Traversal &Explicit, const Traversal &Candidate) {
-  long StartDistance = Explicit.begin() - Candidate.begin();
-  long EndDistance = Explicit.end() - Candidate.end();
+static Score score(const Traversal &Explicit, const Traversal &Ideal) {
+  long StartDistance = Explicit.begin() - Ideal.begin();
+  long EndDistance = Explicit.end() - Ideal.end();
 
-  auto ExplicitStrides = Explicit.getStrides();
-  auto CandidateStrides = Candidate.getStrides();
-  long CommonStrides = commonPrefixStrides(ExplicitStrides, CandidateStrides);
-  uint64_t TypeDistValue = typeDistance(Explicit.TargetType,
-                                        Candidate.TargetType);
+  long CommonStrides = commonPrefixStrides(Explicit.TraversedArrays,
+                                           Ideal.TraversedArrays);
+  uint64_t TypeDistValue = typeDistance(Explicit.TargetType, Ideal.TargetType);
 
   if (StartDistance < 0) {
 
@@ -502,41 +492,41 @@ static Score score(const Traversal &Explicit, const Traversal &Candidate) {
                     .SizeRelation = SizeRelation::Same,
                     .TypeDistance = TypeDistValue,
                     .CommonStrides = CommonStrides,
-                    .Depth = Candidate.depth() };
+                    .Depth = Ideal.depth() };
     } else if (EndDistance < 0) {
 
-      // Explicit ends before Candidate
+      // Explicit ends before Ideal
       return Score{ .Valid = true,
                     .StartDistance = 0,
                     .SizeRelation = SizeRelation::Larger,
                     .TypeDistance = 0,
                     .CommonStrides = 0,
-                    .Depth = Candidate.depth() };
+                    .Depth = Ideal.depth() };
     } else if (EndDistance > 0) {
 
-      // Explicit ends after Candidate
+      // Explicit ends after Ideal
       return Score{ .Valid = true,
                     .StartDistance = 0,
                     .SizeRelation = SizeRelation::Smaller,
                     .TypeDistance = 0,
                     .CommonStrides = 0,
-                    .Depth = Candidate.depth() };
+                    .Depth = Ideal.depth() };
     }
   } else if (StartDistance > 0) {
 
-    // Candidate comes first (StartDistance > 0)
+    // Ideal comes first (StartDistance > 0)
     if (EndDistance <= 0) {
 
-      // Explicit ends before or at Candidate
+      // Explicit ends before or at Ideal
       return Score{ .Valid = true,
                     .StartDistance = StartDistance,
                     .SizeRelation = SizeRelation::DontCare,
                     .TypeDistance = 0,
                     .CommonStrides = 0,
-                    .Depth = Candidate.depth() };
+                    .Depth = Ideal.depth() };
     } else {
 
-      // Explicit ends after Candidate - partial overlap, invalid
+      // Explicit ends after Ideal - partial overlap, invalid
       return Score::invalid();
     }
   }
@@ -595,13 +585,14 @@ private:
   traverse(mlir::Type BaseType);
 
   /// Underlying `impl` method for performing the recursive step of the traverse
-  /// of a `BaseType`
-  void traverseImpl(mlir::Type Type,
-                    std::vector<Traversal> &Traversals,
-                    std::vector<ArrayPath> &ArrayPaths,
-                    int64_t CurrentOffset = 0,
-                    const std::vector<uint64_t> &FieldPath = {},
-                    const ArrayPath &CurrentArrayPath = {});
+  /// of a `BaseType`. Uses `RecursiveCoroutine` for stack safety.
+  RecursiveCoroutine<void>
+  traverseImpl(mlir::Type Type,
+               std::vector<Traversal> &Traversals,
+               std::vector<ArrayPath> &ArrayPaths,
+               int64_t CurrentOffset = 0,
+               const std::vector<uint64_t> &FieldPath = {},
+               const ArrayPath &CurrentArrayPath = {});
 };
 
 const std::vector<Traversal> &
@@ -649,9 +640,14 @@ TypeTraversalAnalyzer::traverse(mlir::Type BaseType) {
   auto [It, Inserted] = Data.insert({ BaseType, TraversalInfo() });
   auto &[Traversals, ArrayPaths] = It->second;
 
+  // Add the empty `ArrayPath` representing the case where no `array` is
+  // traversed. This ensures that `toExplicitArrayAccesses` can produce
+  // explicit `Arithmetic`s even when no array traversal is involved.
+  ArrayPaths.push_back(ArrayPath());
+
   // Recursively traverse the `BaseType` to populate `Traversal`s and
   // `ArrayPath`s
-  traverseImpl(BaseType, Traversals, ArrayPaths);
+  rc_eval(traverseImpl(BaseType, Traversals, ArrayPaths));
 
   // Sort traversals by `StartOffset`, then by `Size` of the `TargetType`
   std::sort(Traversals.begin(),
@@ -676,59 +672,60 @@ TypeTraversalAnalyzer::traverse(mlir::Type BaseType) {
   return It;
 }
 
-void TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
-                                         std::vector<Traversal> &Traversals,
-                                         std::vector<ArrayPath> &ArrayPaths,
-                                         int64_t CurrentOffset,
-                                         const std::vector<uint64_t> &FieldPath,
-                                         const ArrayPath &CurrentArrayPath) {
+RecursiveCoroutine<void>
+TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
+                                    std::vector<Traversal> &Traversals,
+                                    std::vector<ArrayPath> &ArrayPaths,
+                                    int64_t CurrentOffset,
+                                    const std::vector<uint64_t> &FieldPath,
+                                    const ArrayPath &CurrentArrayPath) {
 
   // We should never reach a type with zero size - if we do, it means there is
   // something severely wrong in the types we're working with
   revng_assert(getTypeSize(Type) > 0);
 
-  if (auto PrimitiveType = Type.dyn_cast<clift::PrimitiveType>()) {
-
-    // `PrimitiveType` is a leaf node in our traversal
+  // Helper to add a `Traversal` landing on the current type at the current
+  // position in the traversal
+  auto AddTraversal = [&](mlir::Type TargetType) {
     Traversal T;
-    T.TargetType = PrimitiveType;
+    T.TargetType = TargetType;
     T.StartOffset = CurrentOffset;
     T.LeftoverOffset = 0;
     T.TraversedFields = FieldPath;
-    T.TraversedArrays = arrayPathToSet(CurrentArrayPath);
+    T.TraversedArrays = arrayPathToSortedVector(CurrentArrayPath);
     Traversals.push_back(T);
-    return;
+  };
+
+  if (auto PrimitiveType = Type.dyn_cast<clift::PrimitiveType>()) {
+    // `PrimitiveType` is a leaf node in our traversal
+    AddTraversal(PrimitiveType);
+    rc_return;
   }
 
   // `PointerType` is a leaf node in our traversal: we do not traverse
   // through pointers, but we still want to produce a `Traversal` that
   // lands on a field whose type is a pointer
   if (auto Pointer = Type.dyn_cast<clift::PointerType>()) {
-
-    Traversal T;
-    T.TargetType = Pointer;
-    T.StartOffset = CurrentOffset;
-    T.LeftoverOffset = 0;
-    T.TraversedFields = FieldPath;
-    T.TraversedArrays = arrayPathToSet(CurrentArrayPath);
-    Traversals.push_back(T);
-    return;
+    AddTraversal(Pointer);
+    rc_return;
   }
 
   // Traverse each `typedef`
   if (auto Typedef = Type.dyn_cast<clift::TypedefType>()) {
+    AddTraversal(Typedef);
     clift::ValueType UnderlyingType = Typedef.getUnderlyingType();
-    traverseImpl(UnderlyingType.cast<mlir::Type>(),
-                 Traversals,
-                 ArrayPaths,
-                 CurrentOffset,
-                 FieldPath,
-                 CurrentArrayPath);
-    return;
+    rc_recur traverseImpl(UnderlyingType.cast<mlir::Type>(),
+                          Traversals,
+                          ArrayPaths,
+                          CurrentOffset,
+                          FieldPath,
+                          CurrentArrayPath);
+    rc_return;
   }
 
   // Traverse the `array`
   if (auto ArrayType = Type.dyn_cast<clift::ArrayType>()) {
+    AddTraversal(ArrayType);
     clift::ValueType ElementType = ArrayType.getElementType();
     uint64_t NumElements = ArrayType.getElementsCount();
     uint64_t ElementSize = ElementType.getByteSize();
@@ -756,29 +753,20 @@ void TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
     ArrayPaths.push_back(NewArrayPath);
 
     // Traverse into the first element of the array
-    traverseImpl(ElementType.cast<mlir::Type>(),
-                 Traversals,
-                 ArrayPaths,
-                 CurrentOffset,
-                 FieldPath,
-                 NewArrayPath);
-    return;
+    rc_recur traverseImpl(ElementType.cast<mlir::Type>(),
+                          Traversals,
+                          ArrayPaths,
+                          CurrentOffset,
+                          FieldPath,
+                          NewArrayPath);
+    rc_return;
   }
 
-  // Traverse the `struct`
-  if (auto StructType = Type.dyn_cast<clift::StructType>()) {
-
-    // Add the `Traversal` for the `struct` itself
-    Traversal T;
-    T.TargetType = StructType;
-    T.StartOffset = CurrentOffset;
-    T.LeftoverOffset = 0;
-    T.TraversedFields = FieldPath;
-    T.TraversedArrays = arrayPathToSet(CurrentArrayPath);
-    Traversals.push_back(T);
-
-    // Traverse each field
-    llvm::ArrayRef<clift::FieldAttr> Fields = StructType.getFields();
+  // Traverse `struct` or `union` (both implement `ClassType`).
+  // For `union`s, `Field.getOffset()` always returns 0 by verification.
+  if (auto ClassType = mlir::dyn_cast<clift::ClassType>(Type)) {
+    AddTraversal(ClassType);
+    llvm::ArrayRef<clift::FieldAttr> Fields = ClassType.getFields();
     for (size_t I = 0; I < Fields.size(); ++I) {
       clift::FieldAttr Field = Fields[I];
       clift::ValueType FieldType = Field.getType();
@@ -787,48 +775,14 @@ void TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
       std::vector<uint64_t> NewFieldPath = FieldPath;
       NewFieldPath.push_back(static_cast<uint64_t>(I));
 
-      traverseImpl(FieldType.cast<mlir::Type>(),
-                   Traversals,
-                   ArrayPaths,
-                   FieldOffset,
-                   NewFieldPath,
-                   CurrentArrayPath);
+      rc_recur traverseImpl(FieldType.cast<mlir::Type>(),
+                            Traversals,
+                            ArrayPaths,
+                            FieldOffset,
+                            NewFieldPath,
+                            CurrentArrayPath);
     }
-    return;
-  }
-
-  // Traverse the `union`
-  if (auto UnionType = Type.dyn_cast<clift::UnionType>()) {
-
-    // Add `Traversal` for the `union` itself
-    Traversal T;
-    T.TargetType = UnionType;
-    T.StartOffset = CurrentOffset;
-    T.LeftoverOffset = 0;
-    T.TraversedFields = FieldPath;
-    T.TraversedArrays = arrayPathToSet(CurrentArrayPath);
-    Traversals.push_back(T);
-
-    // For `union`s, all their fields start at the same `Offset`
-    llvm::ArrayRef<clift::FieldAttr> Fields = UnionType.getFields();
-    for (size_t I = 0; I < Fields.size(); ++I) {
-      clift::FieldAttr Field = Fields[I];
-      clift::ValueType FieldType = Field.getType();
-
-      // `union` fields all start at `CurrentOffset`
-      int64_t FieldOffset = CurrentOffset;
-
-      std::vector<uint64_t> NewFieldPath = FieldPath;
-      NewFieldPath.push_back(static_cast<uint64_t>(I));
-
-      traverseImpl(FieldType.cast<mlir::Type>(),
-                   Traversals,
-                   ArrayPaths,
-                   FieldOffset,
-                   NewFieldPath,
-                   CurrentArrayPath);
-    }
-    return;
+    rc_return;
   }
 
   // Traverse the `enum`
@@ -838,22 +792,16 @@ void TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
     clift::ValueType UnderlyingType = EnumType.getUnderlyingType();
 
     // Add traversal for the `enum` itself
-    Traversal T;
-    T.TargetType = EnumType;
-    T.StartOffset = CurrentOffset;
-    T.LeftoverOffset = 0;
-    T.TraversedFields = FieldPath;
-    T.TraversedArrays = arrayPathToSet(CurrentArrayPath);
-    Traversals.push_back(T);
+    AddTraversal(EnumType);
 
     // Also traverse into the underlying type inside the `enum
-    traverseImpl(UnderlyingType.cast<mlir::Type>(),
-                 Traversals,
-                 ArrayPaths,
-                 CurrentOffset,
-                 FieldPath,
-                 CurrentArrayPath);
-    return;
+    rc_recur traverseImpl(UnderlyingType.cast<mlir::Type>(),
+                          Traversals,
+                          ArrayPaths,
+                          CurrentOffset,
+                          FieldPath,
+                          CurrentArrayPath);
+    rc_return;
   }
 }
 
@@ -896,7 +844,7 @@ private:
   /// Helper which trivially spill a `PointerArithmetic` into a `Traversal`
   Traversal toTraversal(const PointerArithmetic &PA,
                         const mlir::Type &PointeeType,
-                        const Traversal &Candidate);
+                        const Traversal &Ideal);
 
   /// Obtain the best `Traversal`
   std::optional<Traversal>
@@ -921,7 +869,6 @@ BestTraversalChooser::computeBestTraversal(ExpressionOpInterface
   // `LinearCombination` portion of `Arithmetic`
   std::vector<PointerArithmetic>
     ExplicitArithmetics = toExplicitArrayAccesses(Arithmetic);
-  ExplicitArithmetics.push_back(Arithmetic);
 
   mlir::Type PointeeType = PointerToReplaceType.cast<PointerType>()
                              .getPointeeType();
@@ -971,10 +918,13 @@ BestTraversalChooser::computeBestTraversal(ExpressionOpInterface
 std::optional<PointerArithmetic>
 BestTraversalChooser::getExplicitArithmetic(const PointerArithmetic &Arithmetic,
                                             const ArrayPath &AP) {
-  PointerArithmetic Result = {
-    .BasePointer = Arithmetic.BasePointer,
-    .Offset = PointerArithmetic::OffsetExpression(),
-  };
+
+  // Recover the `PointerBitSize` from the computed `PointerArithmetic`, so we
+  // have centralized place for computing it
+  unsigned PointerBitSize = Arithmetic.PointerBitSize;
+
+  PointerArithmetic Result(PointerBitSize);
+  Result.BasePointer = Arithmetic.BasePointer;
 
   // We do not modify the input `Arithmetic`, but we work on a local copy
   PointerArithmetic WorkingArithmetic = Arithmetic;
@@ -985,8 +935,8 @@ BestTraversalChooser::getExplicitArithmetic(const PointerArithmetic &Arithmetic,
     // Consume the offset from the parent array element
     Result.Offset.BaseOffset += OffsetFromParentArrayElement;
 
-    revng_assert(llvm::APInt(64, OffsetFromParentArrayElement)
-                   .ule(WorkingArithmetic.Offset.BaseOffset));
+    revng_assert(WorkingArithmetic.Offset.BaseOffset
+                   .uge(OffsetFromParentArrayElement));
     llvm::APInt OffsetInsideArray = WorkingArithmetic.Offset.BaseOffset
                                     - OffsetFromParentArrayElement;
     WorkingArithmetic.Offset.BaseOffset = OffsetInsideArray;
@@ -1000,8 +950,8 @@ BestTraversalChooser::getExplicitArithmetic(const PointerArithmetic &Arithmetic,
     // nested arrays with the same element size, e.g., int array[1][1])
     revng_assert(LC.empty() or LC.back().Stride.uge(Stride));
 
-    llvm::APInt IndexConstantComponent = llvm::APInt(64, 0);
-    if (WorkingArithmetic.Offset.BaseOffset.uge(llvm::APInt(64, Stride))) {
+    llvm::APInt IndexConstantComponent = llvm::APInt(PointerBitSize, 0);
+    if (WorkingArithmetic.Offset.BaseOffset.uge(Stride)) {
       IndexConstantComponent = WorkingArithmetic.Offset.BaseOffset.udiv(Stride);
       revng_assert(IndexConstantComponent.ult(NumElements));
       WorkingArithmetic.Offset.BaseOffset = WorkingArithmetic.Offset.BaseOffset
@@ -1015,14 +965,20 @@ BestTraversalChooser::getExplicitArithmetic(const PointerArithmetic &Arithmetic,
     // subsequent `ArrayPath` will hit the sweet spot, or none will, but that's
     // not something we have to handle here.
     if (not WorkingArithmetic.Offset.LinearCombination.empty()) {
-      if (llvm::APInt(64, Stride)
-            .ult(WorkingArithmetic.Offset.LinearCombination.front().Stride)) {
+      if (WorkingArithmetic.Offset.LinearCombination.front()
+            .Stride.ugt(Stride)) {
         return std::nullopt;
       }
       if (Stride == WorkingArithmetic.Offset.LinearCombination.front().Stride) {
-        IndexVariableComponent = WorkingArithmetic.Offset.LinearCombination
-                                   .front()
-                                   .Idx.Variable;
+        auto &FrontTerm = WorkingArithmetic.Offset.LinearCombination.front();
+        IndexVariableComponent = FrontTerm.Idx.Variable;
+
+        // If the index also has a constant component, sum it into the
+        // `IndexConstantComponent` we are building
+        if (FrontTerm.Idx.Constant.getBoolValue()) {
+          IndexConstantComponent += FrontTerm.Idx.Constant;
+        }
+
         WorkingArithmetic.Offset.LinearCombination
           .erase(WorkingArithmetic.Offset.LinearCombination.begin());
       }
@@ -1030,7 +986,8 @@ BestTraversalChooser::getExplicitArithmetic(const PointerArithmetic &Arithmetic,
 
     // We add a new term to the constructed `LinearCombination`, using the
     // `Index` components identified
-    LC.push_back(PointerArithmetic::StridedTerm(llvm::APInt(64, Stride),
+    LC.push_back(PointerArithmetic::StridedTerm(llvm::APInt(PointerBitSize,
+                                                            Stride),
                                                 { IndexVariableComponent,
                                                   IndexConstantComponent }));
   }
@@ -1087,17 +1044,17 @@ BestTraversalChooser::toExplicitArrayAccesses(const PointerArithmetic
 
 Traversal BestTraversalChooser::toTraversal(const PointerArithmetic &PA,
                                             const mlir::Type &PointeeType,
-                                            const Traversal &Candidate) {
+                                            const Traversal &Ideal) {
 
   // We want to turn an explicit `PointerArithmetic` `PA` in a `Traversal`,
-  // assuming that it does the traversal described in `Candidate`
-  Traversal Result = Candidate;
+  // assuming that it does the traversal described in `Ideal`
+  Traversal Result = Ideal;
 
   // Because `PA` is explicit (i.e. all array traversals at fixed index have
   // been expanded in the `LinearCombination`), the `Result` `Traversal` will
   // always be the same, except that we have to adjust the leftover offset
-  Result.LeftoverOffset = PA.Offset.BaseOffset.getSExtValue()
-                          - Candidate.StartOffset;
+  Result.LeftoverOffset = PA.Offset.BaseOffset.getZExtValue()
+                          - Ideal.StartOffset;
 
   // Fix the `TargetType` to the actual type that is required by the traversal
   // on `clift` IR
@@ -1135,18 +1092,16 @@ BestTraversalChooser::getBestTraversal(mlir::Type BaseType,
                                                             PointeeType,
                                                             false);
     for (auto It = Begin; It != End; ++It) {
-      const Traversal &Candidate = *It;
+      const Traversal &Ideal = *It;
 
       // Convert each `ExplicitArithemtic` into a `Traversal`, so we can compare
-      // it with `Candidate`. `ExplicitTraversal` is the `Traversal` that we
+      // it with `Ideal`. `ExplicitTraversal` is the `Traversal` that we
       // would obtain traversing the `BaseType` with `Explicit` if we did
-      // traverse it as the `Candidate` suggests. Basically what can be
+      // traverse it as the `Ideal` suggests. Basically what can be
       // different is just the `LeftOverOffset`.
-      Traversal ExplicitTraversal = toTraversal(Explicit,
-                                                PointeeType,
-                                                Candidate);
+      Traversal ExplicitTraversal = toTraversal(Explicit, PointeeType, Ideal);
 
-      Score CurrentScore = score(ExplicitTraversal, Candidate);
+      Score CurrentScore = score(ExplicitTraversal, Ideal);
 
       if (!CurrentScore.Valid)
         continue;

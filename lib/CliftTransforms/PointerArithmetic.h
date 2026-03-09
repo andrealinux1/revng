@@ -47,11 +47,14 @@ struct PointerArithmetic {
     /// Holds the terms of the linear combination components of the `Offset`
     llvm::SmallVector<StridedTerm> LinearCombination;
 
-    OffsetExpression();
+    OffsetExpression(unsigned BitWidth);
     OffsetExpression(llvm::APInt Offset);
 
     void dump() const debug_function;
   };
+
+  /// Bit width of the pointer type this arithmetic is relative to
+  unsigned PointerBitSize;
 
   /// The base pointer the `PointerArithmetic` is expressed relative to
   /// `BasePointer` object, which is where the root of the computation lies
@@ -59,6 +62,9 @@ struct PointerArithmetic {
 
   /// The offset w.r.t. the `BasePointer`
   OffsetExpression Offset;
+
+  /// Construct a `PointerArithmetic` with the given pointer bit width
+  explicit PointerArithmetic(unsigned PointerBitSize);
 
   /// We define a `PointerArithmetic` with an empty `BasePointer` a _numeric_
   bool isNumeric() const;

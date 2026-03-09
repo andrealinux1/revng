@@ -4,6 +4,7 @@
 #include <compare>
 #include <optional>
 
+#include "revng/ADT/RecursiveCoroutine.h"
 #include "revng/Clift/Clift.h"
 
 #include "EmitFieldAccesses.h"
@@ -18,11 +19,16 @@ static Logger Log("pointer-arithmetic");
 // `PointerArithmetic` class methods
 // =============================================================================
 
-PointerArithmetic::OffsetExpression::OffsetExpression() : BaseOffset(64, 0) {
+PointerArithmetic::OffsetExpression::OffsetExpression(unsigned BitWidth) :
+  BaseOffset(BitWidth, 0) {
 }
 
 PointerArithmetic::OffsetExpression::OffsetExpression(llvm::APInt Offset) :
   BaseOffset(Offset) {
+}
+
+PointerArithmetic::PointerArithmetic(unsigned PointerBitSize) :
+  PointerBitSize(PointerBitSize), Offset(PointerBitSize) {
 }
 
 bool PointerArithmetic::isNumeric() const {
@@ -119,6 +125,8 @@ void PointerArithmetic::dump() const {
 /// computing the `PointerArithmetic` object starting from the
 /// `PointerToReplace`
 class PointerArithmeticBuilder {
+  unsigned PointerBitSize = 0;
+
 public:
   PointerArithmeticBuilder() = default;
 
@@ -127,8 +135,10 @@ public:
   computePointerArithmetic(mlir::clift::ExpressionOpInterface PointerToReplace);
 
 private:
-  // Traversal function to inspect the operands
-  std::optional<PointerArithmetic> traverse(mlir::Value V);
+  // Traversal function to inspect the operands. Uses RecursiveCoroutine
+  // for stack safety, since traverse and compose* are mutually recursive
+  // over user input expressions.
+  RecursiveCoroutine<std::optional<PointerArithmetic>> traverse(mlir::Value V);
 
   // Return the `PointerArithmetic` for the leaf nodes
   PointerArithmetic createLeaf(mlir::Value V);
@@ -136,19 +146,18 @@ private:
   // Methods which are used to compose the currently computed
   // `PointerArithmetic` with different `clift` `Operation`s that want to
   // traverse during our exploration
-  std::optional<PointerArithmetic> composeBitcast(CastOp Bitcast);
+  RecursiveCoroutine<std::optional<PointerArithmetic>>
+  composeBitcast(CastOp Bitcast);
 
-  std::optional<PointerArithmetic> composeAdd(AddOp Add);
+  RecursiveCoroutine<std::optional<PointerArithmetic>> composeAdd(AddOp Add);
 
-  std::optional<PointerArithmetic> composePtrAdd(PtrAddOp PtrAdd);
+  RecursiveCoroutine<std::optional<PointerArithmetic>>
+  composePtrAdd(PtrAddOp PtrAdd);
 
-  std::optional<PointerArithmetic> composeMul(MulOp Mul);
+  RecursiveCoroutine<std::optional<PointerArithmetic>> composeMul(MulOp Mul);
 
-  std::optional<PointerArithmetic> composeShl(ShiftLeftOp ShiftLeft);
-
-  // Contains the logic to merge two `PointerArithmetic` objects
-  std::optional<PointerArithmetic>
-  mergeArithmetics(const PointerArithmetic &LHS, const PointerArithmetic &RHS);
+  RecursiveCoroutine<std::optional<PointerArithmetic>>
+  composeShl(ShiftLeftOp ShiftLeft);
 
   // Helper function used to multiply all the `PointerArithmetic` strides and
   // offset by a constant. Clears the BasePointer since the result of a
@@ -174,9 +183,10 @@ static bool isPointerTyped(ExpressionOpInterface Expr) {
 
 /// Helper function used to extract the underlying constant value from an
 /// `Value`
-static std::optional<llvm::APInt> getConstantValue(mlir::Value V) {
+static std::optional<llvm::APInt> getConstantValue(mlir::Value V,
+                                                   unsigned BitWidth) {
   if (auto Immediate = llvm::dyn_cast_or_null<ImmediateOp>(V.getDefiningOp())) {
-    return llvm::APInt(64, Immediate.getValue());
+    return llvm::APInt(BitWidth, Immediate.getValue());
   }
 
   return std::nullopt;
@@ -195,8 +205,12 @@ PointerArithmeticBuilder::computePointerArithmetic(ExpressionOpInterface
     return std::nullopt;
   }
 
+  // Derive the pointer bit size from the PointerToReplace type
+  auto PtrType = getPointerType(PointerToReplace->getResult(0).getType());
+  PointerBitSize = PtrType.getPointerSize() * 8;
+
   // We traverse upwards the dataflow starting from the
-  auto Result = traverse(PointerToReplace->getResult(0));
+  auto Result = rc_eval(traverse(PointerToReplace->getResult(0)));
 
   // If we got a numeric result, discard it, since we cannot use it
   if (Result && Result->isNumeric()) {
@@ -204,9 +218,7 @@ PointerArithmeticBuilder::computePointerArithmetic(ExpressionOpInterface
   }
 
   // Verify invariants for the obtained `PointerArithmetic`
-  if (Result && !Result->verify()) {
-    return std::nullopt;
-  }
+  revng_assert(!Result || Result->verify());
 
   // Log the resulting `PointerArithmetic`, together with the initial
   // `PointerToReplace` it was produced from
@@ -223,7 +235,7 @@ PointerArithmeticBuilder::computePointerArithmetic(ExpressionOpInterface
   return Result;
 }
 
-std::optional<PointerArithmetic>
+RecursiveCoroutine<std::optional<PointerArithmetic>>
 PointerArithmeticBuilder::traverse(mlir::Value V) {
 
   // Every time we find a compatible `Expression`, we traverse it in order to
@@ -232,37 +244,38 @@ PointerArithmeticBuilder::traverse(mlir::Value V) {
   if (auto Expr = mlir::dyn_cast_or_null<ExpressionOpInterface>(VOp)) {
     if (auto Cast = mlir::dyn_cast<CastOp>(Expr.getOperation())) {
       if (Cast.getKind() == CastKind::Bitcast) {
-        return composeBitcast(Cast);
+        rc_return rc_recur composeBitcast(Cast);
       }
     } else if (auto Add = mlir::dyn_cast<AddOp>(Expr.getOperation())) {
-      return composeAdd(Add);
+      rc_return rc_recur composeAdd(Add);
     } else if (auto PtrAdd = mlir::dyn_cast<PtrAddOp>(Expr.getOperation())) {
-      return composePtrAdd(PtrAdd);
+      rc_return rc_recur composePtrAdd(PtrAdd);
     } else if (auto Mul = mlir::dyn_cast<MulOp>(Expr.getOperation())) {
-      return composeMul(Mul);
+      rc_return rc_recur composeMul(Mul);
     } else if (auto
                  ShiftLeft = mlir::dyn_cast<ShiftLeftOp>(Expr.getOperation())) {
-      return composeShl(ShiftLeft);
+      rc_return rc_recur composeShl(ShiftLeft);
     }
   }
 
   // If we do not traverse V, we create the leaf
-  return createLeaf(V);
+  rc_return createLeaf(V);
 }
 
 PointerArithmetic PointerArithmeticBuilder::createLeaf(mlir::Value V) {
-  PointerArithmetic PA;
+  PointerArithmetic PA(PointerBitSize);
   auto VOp = V.getDefiningOp();
 
+  using OffsetExpression = PointerArithmetic::OffsetExpression;
   if (mlir::dyn_cast_or_null<AddressofOp>(V.getDefiningOp())) {
 
     // Pointer typed expression
     PA.BasePointer = V;
-    PA.Offset = PointerArithmetic::OffsetExpression(llvm::APInt(64, 0));
-  } else if (auto ConstantValue = getConstantValue(V)) {
+    PA.Offset = OffsetExpression(llvm::APInt(PointerBitSize, 0));
+  } else if (auto ConstantValue = getConstantValue(V, PointerBitSize)) {
 
     // Integer Constant
-    PA.Offset = PointerArithmetic::OffsetExpression(*ConstantValue);
+    PA.Offset = OffsetExpression(*ConstantValue);
   } else {
 
     // We want to handle `ExpressionOpInterface`s and `mlir::BlockArgument`s for
@@ -272,38 +285,40 @@ PointerArithmetic PointerArithmeticBuilder::createLeaf(mlir::Value V) {
         or isa<mlir::BlockArgument>(V)) {
 
       // Generic offset expression - strided 1 term
-      PA.Offset = PointerArithmetic::OffsetExpression(llvm::APInt(64, 0));
-      PA.Offset.LinearCombination.emplace_back(llvm::APInt(64, 1),
+      PA.Offset = OffsetExpression(llvm::APInt(PointerBitSize, 0));
+      PA.Offset.LinearCombination.emplace_back(llvm::APInt(PointerBitSize, 1),
                                                PointerArithmetic::Index{
-                                                 V, llvm::APInt(64, 0) });
+                                                 V,
+                                                 llvm::APInt(PointerBitSize,
+                                                             0) });
     }
   }
 
   return PA;
 }
 
-std::optional<PointerArithmetic>
+RecursiveCoroutine<std::optional<PointerArithmetic>>
 PointerArithmeticBuilder::composeBitcast(CastOp Cast) {
 
   // Retrieve the `bitcast` single `Operand`, and recursively forward the
   // `PointerArithmetic` produced from it
   auto Operand = Cast->getOperand(0);
-  return traverse(Operand);
+  rc_return rc_recur traverse(Operand);
 }
 
-std::optional<PointerArithmetic>
+RecursiveCoroutine<std::optional<PointerArithmetic>>
 PointerArithmeticBuilder::composeAdd(AddOp Add) {
   auto LHS = Add->getOperand(0);
   auto RHS = Add->getOperand(1);
 
-  auto LHSPA = traverse(LHS);
-  auto RHSPA = traverse(RHS);
+  auto LHSPA = rc_recur traverse(LHS);
+  auto RHSPA = rc_recur traverse(RHS);
 
   // It may happen that either the LHS or the RHS traversal produced an invalid
   // `PointerArithmetic` result. In such case, we need to propagate upward the
   // failure.
   if (not LHSPA or not RHSPA) {
-    return std::nullopt;
+    rc_return std::nullopt;
   }
 
   // It may happen that both `LHSPA` or `RHSPA` have an address
@@ -311,33 +326,71 @@ PointerArithmeticBuilder::composeAdd(AddOp Add) {
   // `BasePointer`, so we bail out from the construction of the
   // `PointerArithmetic` result.
   if (LHSPA->isAddress() and RHSPA->isAddress()) {
-    return std::nullopt;
+    rc_return std::nullopt;
   }
 
-  // If we have valid `PointerArithmetics` for both the operands, we compose the
-  // results and propagate them upwards
-  return mergeArithmetics(*LHSPA, *RHSPA);
+  // Add the two `PointerArithmetic`s together
+  PointerArithmetic Result(PointerBitSize);
+
+  // Add the `BaseOffsets`
+  Result.Offset.BaseOffset = LHSPA->Offset.BaseOffset
+                             + RHSPA->Offset.BaseOffset;
+
+  // Append the linear combinations of `LHS` and `RHS`
+  Result.Offset.LinearCombination = LHSPA->Offset.LinearCombination;
+  Result.Offset.LinearCombination
+    .append(RHSPA->Offset.LinearCombination.begin(),
+            RHSPA->Offset.LinearCombination.end());
+
+  // After we combined the `LinearCombination`s coming from the operands, we
+  // sort them in descending order so that larger `Stride`s come before shorter
+  // ones. This is the expected form derived from a nested array access, where
+  // the stride of the _outer_ level is greater than the _inner_ one by
+  // construction. Duplicate strides are checked in the verify phase as an
+  // invariant.
+  sortLinearCombination(Result);
+
+  // After merging and sorting, if both sides contributed terms with the same
+  // `Stride`, the `Result` would have duplicate `Stride`s and not pass verify.
+  // In this situation, we return `nullopt` in order to soft fail the
+  // `PointerArithmetic` construction, instead of not verifying.
+  for (size_t I = 1; I < Result.Offset.LinearCombination.size(); ++I) {
+    const auto &LinearCombination = Result.Offset.LinearCombination;
+    if (LinearCombination[I].Stride == LinearCombination[I - 1].Stride) {
+      rc_return std::nullopt;
+    }
+  }
+
+  // We propagate as the `BasePointer` of the result the one corresponding to
+  // the _address_ part of the traversal
+  if (LHSPA->isAddress()) {
+    Result.BasePointer = LHSPA->BasePointer;
+  } else if (RHSPA->isAddress()) {
+    Result.BasePointer = RHSPA->BasePointer;
+  }
+
+  rc_return Result;
 }
 
-std::optional<PointerArithmetic>
+RecursiveCoroutine<std::optional<PointerArithmetic>>
 PointerArithmeticBuilder::composePtrAdd(PtrAddOp Add) {
 
   mlir::Value PointerOperand = Add.getPointer();
   mlir::Value OffsetOperand = Add.getOffset();
 
   // Compute the `PointerArithmetic` for both the pointer and offset operands.
-  auto PointerOperandPA = traverse(PointerOperand);
-  auto OffsetOperandPA = traverse(OffsetOperand);
+  auto PointerOperandPA = rc_recur traverse(PointerOperand);
+  auto OffsetOperandPA = rc_recur traverse(OffsetOperand);
 
   // We should check that the pointer and offset operands are not both `numeric`
   // or `address`
   if (not PointerOperandPA or not OffsetOperandPA) {
-    return std::nullopt;
+    rc_return std::nullopt;
   }
   revng_assert(not(PointerOperandPA->isAddress()
                    and OffsetOperandPA->isAddress()));
   revng_assert(not(PointerOperandPA->isNumeric()
-                   and OffsetOperandPA->isAddress()));
+                   and OffsetOperandPA->isNumeric()));
 
   // We expect that the offset operand is indeed a numeric `PointerArithmetic`.
   // We need this so that we can multiply the size of the clift pointee type by
@@ -352,10 +405,10 @@ PointerArithmeticBuilder::composePtrAdd(PtrAddOp Add) {
   PointerOperandPA->Offset.BaseOffset += OffsetOperandPA->Offset.BaseOffset
                                          * PointeeSize;
 
-  return PointerOperandPA;
+  rc_return PointerOperandPA;
 }
 
-std::optional<PointerArithmetic>
+RecursiveCoroutine<std::optional<PointerArithmetic>>
 PointerArithmeticBuilder::composeMul(MulOp Mul) {
   auto LHS = Mul.getOperand(0);
   auto RHS = Mul.getOperand(1);
@@ -365,90 +418,53 @@ PointerArithmeticBuilder::composeMul(MulOp Mul) {
   std::optional<llvm::APInt> Constant;
   mlir::Value Variable;
 
-  if (auto C = getConstantValue(LHS)) {
+  if (auto C = getConstantValue(LHS, PointerBitSize)) {
     Constant = C;
     Variable = RHS;
-  } else if (auto C = getConstantValue(RHS)) {
+  } else if (auto C = getConstantValue(RHS, PointerBitSize)) {
     Constant = C;
     Variable = LHS;
   } else {
 
     // Neither operand is constant, bail out
-    return std::nullopt;
+    rc_return std::nullopt;
   }
 
   // Traverse the variable operand
-  auto VarPA = traverse(Variable);
+  auto VarPA = rc_recur traverse(Variable);
   if (not VarPA) {
-    return std::nullopt;
+    rc_return std::nullopt;
   }
 
   // Multiply the result (`multiplyByConstant` also clears `BasePointer`)
-  return multiplyByConstant(*VarPA, *Constant);
+  rc_return multiplyByConstant(*VarPA, *Constant);
 }
 
-std::optional<PointerArithmetic>
+RecursiveCoroutine<std::optional<PointerArithmetic>>
 PointerArithmeticBuilder::composeShl(ShiftLeftOp Shl) {
 
   // Handling is similar to `MulOp`, shift by N is multiplication by 2^N
   auto LHS = Shl.getOperand(0);
   auto RHS = Shl.getOperand(1);
 
-  auto ShiftAmount = getConstantValue(RHS);
+  auto ShiftAmount = getConstantValue(RHS, PointerBitSize);
 
   // We do not have a constant amount to perform the shift, so we bail out
   if (not ShiftAmount) {
-    return std::nullopt;
+    rc_return std::nullopt;
   }
 
   // We craft multiplication factor equivalent to the shift amount
-  llvm::APInt Multiplier = llvm::APInt(64, 1).shl(*ShiftAmount);
+  llvm::APInt Multiplier = llvm::APInt(PointerBitSize, 1).shl(*ShiftAmount);
 
   // We traverse the variable operand
-  auto LHSPA = traverse(LHS);
+  auto LHSPA = rc_recur traverse(LHS);
   if (not LHSPA) {
-    return std::nullopt;
+    rc_return std::nullopt;
   }
 
   // Multiply the result (`multiplyByConstant` also clears `BasePointer`)
-  return multiplyByConstant(*LHSPA, Multiplier);
-}
-
-std::optional<PointerArithmetic>
-PointerArithmeticBuilder::mergeArithmetics(const PointerArithmetic &LHS,
-                                           const PointerArithmetic &RHS) {
-
-  PointerArithmetic Result;
-
-  // Add the `BaseOffsets`
-  Result.Offset.BaseOffset = LHS.Offset.BaseOffset + RHS.Offset.BaseOffset;
-
-  // Append the linear combinations of `LHS` and `RHS`
-  Result.Offset.LinearCombination = LHS.Offset.LinearCombination;
-  Result.Offset.LinearCombination.append(RHS.Offset.LinearCombination.begin(),
-                                         RHS.Offset.LinearCombination.end());
-
-  // After we combined the `LinearCombination`s coming from the operands, we
-  // sort them in descending order so that larger `Stride`s come before shorter
-  // ones. This is the expected form derived from a nested array access, where
-  // the stride of the _outer_ level is greater than the _inner_ one by
-  // construction. Duplicate strides are checked in the verify phase as an
-  // invariant.
-  sortLinearCombination(Result);
-
-  // Set the base pointer to either the `LHS` or `RHS`
-  // At this point, we cannot have that both the operands are of address type
-  revng_assert(not(LHS.isAddress() and RHS.isAddress()));
-
-  // We propagate as the `BasePointer` of the result the one corresponding to
-  // the _address_ part of the traversal
-  if (LHS.isAddress()) {
-    Result.BasePointer = LHS.BasePointer;
-  } else if (RHS.isAddress()) {
-    Result.BasePointer = RHS.BasePointer;
-  }
-
-  return Result;
+  rc_return multiplyByConstant(*LHSPA, Multiplier);
 }
 
 PointerArithmetic

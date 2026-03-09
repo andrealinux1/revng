@@ -5,8 +5,9 @@
 //
 
 #include <optional>
-#include <set>
 #include <vector>
+
+#include "llvm/ADT/SmallVector.h"
 
 #include "revng/Support/Debug.h"
 
@@ -68,15 +69,17 @@ struct Traversal {
   /// `Traversal`
   int64_t LeftoverOffset;
 
-  /// The ID/Offset of each traversed `union`/`struct` field
+  /// The index (position in the fields array) of each traversed
+  /// `union`/`struct` field. For `struct`s, this is the positional index of the
+  /// field, not the byte offset. For unions, all fields start at offset 0 so
+  /// this is also the positional index.
   std::vector<uint64_t> TraversedFields;
 
-  /// This sorted `multiset` contains the `ArrayShape` describing the array
-  /// traversals, ordered in descending order by `Stride` size (operator `<` on
-  /// the `ArrayShape`). There can be consecutive `ArrayShape`s with the same
-  /// `Stride`, to allow to express e.g., `int array[1][1]`. Therefore the usage
-  /// of `std::multiset`.
-  std::multiset<ArrayShape> TraversedArrays;
+  /// Sorted vector of `ArrayShape` describing the array traversals, ordered in
+  /// descending order by `Stride` (via `operator<` on `ArrayShape`). There can
+  /// be consecutive `ArrayShape`s with the same `Stride`, to allow expressing
+  /// e.g., `int array[1][1]`.
+  llvm::SmallVector<ArrayShape> TraversedArrays;
 
   /// Total depth described by this `Traversal` (fields + array elements)
   long depth() const;
@@ -87,10 +90,6 @@ struct Traversal {
   /// First out of bound offset accessed by the `Traversal`, considering the
   /// size of the `PointeeType`
   int64_t end() const;
-
-  /// Helper method to obtain all the distinct `Stride`s described by the
-  /// `Traversal`, useful for comparing stride sets between `Traversal`s
-  std::set<uint64_t> getStrides() const;
 
   /// Helper method used to identify a shallow `Traversal` (a `Traversal` which
   /// does not involve any traversed struct field or array)
