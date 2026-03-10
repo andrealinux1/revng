@@ -17,16 +17,82 @@ using namespace clift;
 
 static Logger Log("best-traversal");
 
+/// Helper function used to retrieve the byte size of any `mlir::Type`
+static uint64_t getTypeSize(mlir::Type Type) {
+  return mlir::cast<clift::ValueType>(Type).getByteSize();
+}
+
+// =============================================================================
+// `ArrayShape` class methods
+// =============================================================================
+
+bool ArrayShape::operator<(const ArrayShape &Other) const {
+  if (Stride != Other.Stride) {
+
+    // Larger strides are organized first
+    return Stride > Other.Stride;
+  }
+  return NumElements < Other.NumElements;
+}
+
+// =============================================================================
+// `Traversal` class methods
+// =============================================================================
+
+long Traversal::depth() const {
+  return TraversedArrays.size() + TraversedFields.size();
+}
+
+int64_t Traversal::begin() const {
+  return StartOffset + LeftoverOffset;
+}
+
+int64_t Traversal::end() const {
+  return begin() + getTypeSize(TargetType);
+}
+
+bool Traversal::isShallow() const {
+  return TraversedFields.empty() and TraversedArrays.empty();
+}
+
+void Traversal::dump() const {
+
+  Log << "\nDumping Traversal:\n";
+
+  // We dump the `TargetType` on which the `Traversal` lands on
+  Log << "  TargetType: ";
+  TargetType.print(*Log.getAsLLVMStream());
+  Log << "\n";
+
+  // Dump the `StartOffset` and `LeftoverOffset`
+  Log << "  StartOffset: " << StartOffset << "\n";
+  Log << "  LeftoverOffset: " << LeftoverOffset << "\n";
+
+  // Dump all the `Traversed Fields` which this `Traversal` describes
+  Log << "  Traversed Fields (" << TraversedFields.size() << "): [";
+  for (size_t I = 0; I < TraversedFields.size(); ++I) {
+    if (I > 0)
+      Log << ", ";
+    Log << TraversedFields[I];
+  }
+  Log << "]\n";
+
+  // Dump all the `TraversedArray` which this `Traversal` describes
+  Log << "  Traversed Arrays (" << TraversedArrays.size() << "):\n";
+  for (const auto &Array : TraversedArrays) {
+    Log << "    { NumElements: " << Array.NumElements
+        << ", Stride: " << Array.Stride << " }\n";
+  }
+
+  Log << "\n";
+  Log.flush();
+}
+
 namespace {
 
 // =============================================================================
 // Static helper functions
 // =============================================================================
-
-/// Helper function used to retrieve the byte size of any `mlir::Type`
-static uint64_t getTypeSize(mlir::Type Type) {
-  return mlir::cast<clift::ValueType>(Type).getByteSize();
-}
 
 /// Helper function which converts a generic `ArrayPath` to a compatible form
 /// used to store the `array` traversal into the `Traversal` class. The
@@ -109,76 +175,6 @@ static int64_t commonPrefixStrides(const llvm::ArrayRef<ArrayShape> &LHS,
 
   return Count;
 }
-
-} // namespace
-
-// =============================================================================
-// `ArrayShape` class methods
-// =============================================================================
-
-bool ArrayShape::operator<(const ArrayShape &Other) const {
-  if (Stride != Other.Stride) {
-
-    // Larger strides are organized first
-    return Stride > Other.Stride;
-  }
-  return NumElements < Other.NumElements;
-}
-
-// =============================================================================
-// `Traversal` class methods
-// =============================================================================
-
-long Traversal::depth() const {
-  return TraversedArrays.size() + TraversedFields.size();
-}
-
-int64_t Traversal::begin() const {
-  return StartOffset + LeftoverOffset;
-}
-
-int64_t Traversal::end() const {
-  return begin() + getTypeSize(TargetType);
-}
-
-bool Traversal::isShallow() const {
-  return TraversedFields.empty() and TraversedArrays.empty();
-}
-
-void Traversal::dump() const {
-
-  Log << "\nDumping Traversal:\n";
-
-  // We dump the `TargetType` on which the `Traversal` lands on
-  Log << "  TargetType: ";
-  TargetType.print(*Log.getAsLLVMStream());
-  Log << "\n";
-
-  // Dump the `StartOffset` and `LeftoverOffset`
-  Log << "  StartOffset: " << StartOffset << "\n";
-  Log << "  LeftoverOffset: " << LeftoverOffset << "\n";
-
-  // Dump all the `Traversed Fields` which this `Traversal` describes
-  Log << "  Traversed Fields (" << TraversedFields.size() << "): [";
-  for (size_t I = 0; I < TraversedFields.size(); ++I) {
-    if (I > 0)
-      Log << ", ";
-    Log << TraversedFields[I];
-  }
-  Log << "]\n";
-
-  // Dump all the `TraversedArray` which this `Traversal` describes
-  Log << "  Traversed Arrays (" << TraversedArrays.size() << "):\n";
-  for (const auto &Array : TraversedArrays) {
-    Log << "    { NumElements: " << Array.NumElements
-        << ", Stride: " << Array.Stride << " }\n";
-  }
-
-  Log << "\n";
-  Log.flush();
-}
-
-namespace {
 
 // =============================================================================
 // `TypeDistance` helper methods definition
