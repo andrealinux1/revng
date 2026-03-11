@@ -23,9 +23,9 @@ static std::pair<CliftType, bool>
 getAccessedTypeInfo(mlir::Value CurrentValue) {
   if (isPointerType(CurrentValue.getType())) {
     auto PtrType = getPointerType(CurrentValue.getType());
-    return { dealias(PtrType.getPointeeType()).cast<CliftType>(), true };
+    return { mlir::cast<CliftType>(dealias(PtrType.getPointeeType())), true };
   }
-  return { dealias(CurrentValue.getType()).cast<CliftType>(), false };
+  return { mlir::cast<CliftType>(dealias(CurrentValue.getType())), false };
 }
 
 // =============================================================================
@@ -115,22 +115,24 @@ Replacement Replacement::make(const PointerArithmetic &Arithmetic,
   while (FieldIt != FieldEnd or ArrayIt != ArrayEnd) {
 
     // Inspect the `TypedefType` and cast to a known `clift` `Type`
-    if (auto TypedefType = BaseType.dyn_cast<clift::TypedefType>()) {
-      BaseType = TypedefType.getUnderlyingType().cast<mlir::Type>();
+    if (auto TypedefType = mlir::dyn_cast<clift::TypedefType>(BaseType)) {
+      BaseType = mlir::cast<mlir::Type>(TypedefType.getUnderlyingType());
       continue;
     }
 
     // We should never reach these `Type`s by construction
-    if (BaseType.isa<FunctionType>() or BaseType.isa<PointerType>()
-        or BaseType.isa<PrimitiveType>() or BaseType.isa<EnumType>()) {
+    if (mlir::isa<FunctionType>(BaseType) or mlir::isa<PointerType>(BaseType)
+        or mlir::isa<PrimitiveType>(BaseType)
+        or mlir::isa<EnumType>(BaseType)) {
       revng_abort("Invalid type in traversal");
     }
 
     // Inspect `struct` or `union` (both implement ClassType)
     if (auto ClassType = mlir::dyn_cast<clift::ClassType>(BaseType)) {
 
-      auto Kind = BaseType.isa<clift::StructType>() ? FieldAccessInfo::Struct :
-                                                      FieldAccessInfo::Union;
+      auto Kind = mlir::isa<clift::StructType>(BaseType) ?
+                    FieldAccessInfo::Struct :
+                    FieldAccessInfo::Union;
       unsigned FieldIndex = *FieldIt++;
 
       Result.FieldAccesses.push_back({ .TheKind = Kind,
@@ -140,14 +142,14 @@ Replacement Replacement::make(const PointerArithmetic &Arithmetic,
       // Look up the field by positional index. Subtract the field's byte
       // offset from LeftoverOffset (for unions, getOffset() returns 0)
       const FieldAttr &Field = ClassType.getFields()[FieldIndex];
-      BaseType = Field.getType().cast<mlir::Type>();
+      BaseType = mlir::cast<mlir::Type>(Field.getType());
       LeftoverOffset.BaseOffset -= Field.getOffset();
 
       continue;
     }
 
     // Inspect the `array`
-    if (auto ArrayType = BaseType.dyn_cast<clift::ArrayType>()) {
+    if (auto ArrayType = mlir::dyn_cast<clift::ArrayType>(BaseType)) {
 
       ArrayShape CurrentArray = *ArrayIt++;
 
@@ -212,9 +214,8 @@ void Replacement::replace(ExpressionOpInterface PointerToReplace,
   // access the `struct` fields and `array` members, and to generate the
   // `AddressOp` at the end of the field access substitution. We extract it
   // from the `PointerToReplace` we are processing.
-  auto PointerSize = PointerToReplace->getResult(0)
-                       .getType()
-                       .cast<PointerType>()
+  auto PointerSize = mlir::cast<PointerType>(PointerToReplace->getResult(0)
+                                               .getType())
                        .getPointerSize();
 
   // Set insertion point right before the `PointerToReplace`

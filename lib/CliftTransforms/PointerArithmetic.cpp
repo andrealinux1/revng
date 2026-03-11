@@ -185,7 +185,7 @@ static bool isPointerTyped(ExpressionOpInterface Expr) {
 /// `Value`
 static std::optional<llvm::APInt> getConstantValue(mlir::Value V,
                                                    unsigned BitWidth) {
-  if (auto Immediate = llvm::dyn_cast_or_null<ImmediateOp>(V.getDefiningOp())) {
+  if (auto Immediate = mlir::dyn_cast_or_null<ImmediateOp>(V.getDefiningOp())) {
     return llvm::APInt(BitWidth, Immediate.getValue());
   }
 
@@ -281,8 +281,8 @@ PointerArithmetic PointerArithmeticBuilder::createLeaf(mlir::Value V) {
     // We want to handle `ExpressionOpInterface`s and `mlir::BlockArgument`s for
     // building leaf `PA` containing a `LinearCombination`. These can be the
     // `Index` component of an array access.
-    if ((VOp and (isa<ExpressionOpInterface>(VOp)))
-        or isa<mlir::BlockArgument>(V)) {
+    if ((VOp and (mlir::isa<ExpressionOpInterface>(VOp)))
+        or mlir::isa<mlir::BlockArgument>(V)) {
 
       // Generic offset expression - strided 1 term
       PA.Offset = OffsetExpression(llvm::APInt(PointerBitSize, 0));

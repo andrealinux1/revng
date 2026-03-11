@@ -215,7 +215,7 @@ class TypeDistanceLatticeCompute {
 private:
   // Helper function to classify a `Type` into its `LatticeNode`
   LatticeNode classifyType(mlir::Type T) {
-    if (auto PType = T.dyn_cast<PrimitiveType>()) {
+    if (auto PType = mlir::dyn_cast<PrimitiveType>(T)) {
       auto Kind = PType.getKind();
 
       // Assign the `PrimitiveKind`s
@@ -234,11 +234,11 @@ private:
       }
     }
 
-    if (T.isa<EnumType>()) {
+    if (mlir::isa<EnumType>(T)) {
       return LatticeNode::Enum;
     }
 
-    if (T.isa<PointerType>()) {
+    if (mlir::isa<PointerType>(T)) {
       return LatticeNode::Pointer;
     }
 
@@ -351,11 +351,11 @@ static uint64_t typeDistance(mlir::Type Explicit, mlir::Type Ideal) {
 
   // First, unwrap any typedefs as they should be traversed in order to reach
   // the underlying type
-  while (auto TypedefExplicit = Explicit.dyn_cast<TypedefType>()) {
-    Explicit = TypedefExplicit.getUnderlyingType().cast<mlir::Type>();
+  while (auto TypedefExplicit = mlir::dyn_cast<TypedefType>(Explicit)) {
+    Explicit = mlir::cast<mlir::Type>(TypedefExplicit.getUnderlyingType());
   }
-  while (auto TypedefIdeal = Ideal.dyn_cast<TypedefType>()) {
-    Ideal = TypedefIdeal.getUnderlyingType().cast<mlir::Type>();
+  while (auto TypedefIdeal = mlir::dyn_cast<TypedefType>(Ideal)) {
+    Ideal = mlir::cast<mlir::Type>(TypedefIdeal.getUnderlyingType());
   }
 
   // If sizes differ, the `TypeDistance` is infinity
@@ -692,7 +692,7 @@ TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
     Traversals.push_back(T);
   };
 
-  if (auto PrimitiveType = Type.dyn_cast<clift::PrimitiveType>()) {
+  if (auto PrimitiveType = mlir::dyn_cast<clift::PrimitiveType>(Type)) {
     // `PrimitiveType` is a leaf node in our traversal
     AddTraversal(PrimitiveType);
     rc_return;
@@ -701,16 +701,16 @@ TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
   // `PointerType` is a leaf node in our traversal: we do not traverse
   // through pointers, but we still want to produce a `Traversal` that
   // lands on a field whose type is a pointer
-  if (auto Pointer = Type.dyn_cast<clift::PointerType>()) {
+  if (auto Pointer = mlir::dyn_cast<clift::PointerType>(Type)) {
     AddTraversal(Pointer);
     rc_return;
   }
 
   // Traverse each `typedef`
-  if (auto Typedef = Type.dyn_cast<clift::TypedefType>()) {
+  if (auto Typedef = mlir::dyn_cast<clift::TypedefType>(Type)) {
     AddTraversal(Typedef);
     clift::ValueType UnderlyingType = Typedef.getUnderlyingType();
-    rc_recur traverseImpl(UnderlyingType.cast<mlir::Type>(),
+    rc_recur traverseImpl(mlir::cast<mlir::Type>(UnderlyingType),
                           Traversals,
                           ArrayPaths,
                           CurrentOffset,
@@ -720,7 +720,7 @@ TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
   }
 
   // Traverse the `array`
-  if (auto ArrayType = Type.dyn_cast<clift::ArrayType>()) {
+  if (auto ArrayType = mlir::dyn_cast<clift::ArrayType>(Type)) {
     AddTraversal(ArrayType);
     clift::ValueType ElementType = ArrayType.getElementType();
     uint64_t NumElements = ArrayType.getElementsCount();
@@ -749,7 +749,7 @@ TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
     ArrayPaths.push_back(NewArrayPath);
 
     // Traverse into the first element of the array
-    rc_recur traverseImpl(ElementType.cast<mlir::Type>(),
+    rc_recur traverseImpl(mlir::cast<mlir::Type>(ElementType),
                           Traversals,
                           ArrayPaths,
                           CurrentOffset,
@@ -771,7 +771,7 @@ TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
       std::vector<uint64_t> NewFieldPath = FieldPath;
       NewFieldPath.push_back(static_cast<uint64_t>(I));
 
-      rc_recur traverseImpl(FieldType.cast<mlir::Type>(),
+      rc_recur traverseImpl(mlir::cast<mlir::Type>(FieldType),
                             Traversals,
                             ArrayPaths,
                             FieldOffset,
@@ -782,7 +782,7 @@ TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
   }
 
   // Traverse the `enum`
-  if (auto EnumType = Type.dyn_cast<clift::EnumType>()) {
+  if (auto EnumType = mlir::dyn_cast<clift::EnumType>(Type)) {
 
     // We traverse the underlying `EnumType`
     clift::ValueType UnderlyingType = EnumType.getUnderlyingType();
@@ -791,7 +791,7 @@ TypeTraversalAnalyzer::traverseImpl(mlir::Type Type,
     AddTraversal(EnumType);
 
     // Also traverse into the underlying type inside the `enum
-    rc_recur traverseImpl(UnderlyingType.cast<mlir::Type>(),
+    rc_recur traverseImpl(mlir::cast<mlir::Type>(UnderlyingType),
                           Traversals,
                           ArrayPaths,
                           CurrentOffset,
@@ -866,7 +866,7 @@ BestTraversalChooser::computeBestTraversal(ExpressionOpInterface
   std::vector<PointerArithmetic>
     ExplicitArithmetics = toExplicitArrayAccesses(Arithmetic);
 
-  mlir::Type PointeeType = PointerToReplaceType.cast<PointerType>()
+  mlir::Type PointeeType = mlir::cast<PointerType>(PointerToReplaceType)
                              .getPointeeType();
   auto BasePtrType = getPointerType(Arithmetic.BasePointer.getType());
   revng_assert(BasePtrType);
