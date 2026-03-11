@@ -3,7 +3,6 @@
 //
 #include <compare>
 #include <optional>
-#include <set>
 
 #include "revng/ADT/RecursiveCoroutine.h"
 #include "revng/Clift/Clift.h"
@@ -176,181 +175,14 @@ static int64_t commonPrefixStrides(const llvm::ArrayRef<ArrayShape> &LHS,
   return Count;
 }
 
-// =============================================================================
-// `TypeDistance` helper methods definition
-// =============================================================================
-
-/// The `TypeDistanceLatticeCompute` class is an helper class that computes the
-/// `TypeDistance` if we need to resort to the lattice usage.
-/// The criterion is described by the following lattice:
-/// enum1 enum2
-///  \    |
-/// unsigned   signed
-///        \   /
-///        number  pointer_to_A  pointer_to_B
-///            \   /           /
-///           pointer_or_number   float
-///                       \      /
-///                        generic
-///
-/// TODO: this distance is NOT symmetric. It counts only upward steps from
-///       Explicit to the least common ancestor (LCA) of Explicit and Ideal. For
-///       example, typeDistance(unsigned, number) = 1, but typeDistance(number,
-///       unsigned) = 0. Double check that this is the wanted behavior.
-// Whenever we have to walk upwards, we weight each step upward 1.
-class TypeDistanceLatticeCompute {
-
-  // Define lattice node types for classification
-  enum class LatticeNode {
-    Enum,
-    Unsigned,
-    Signed,
-    Float,
-    Pointer,
-    Number,
-    PointerOrNumber,
-    Generic
-  };
-
-private:
-  // Helper function to classify a `Type` into its `LatticeNode`
-  LatticeNode classifyType(mlir::Type T) {
-    if (auto PType = mlir::dyn_cast<PrimitiveType>(T)) {
-      auto Kind = PType.getKind();
-
-      // Assign the `PrimitiveKind`s
-      if (Kind == PrimitiveKind::GenericKind) {
-        return LatticeNode::Generic;
-      } else if (Kind == PrimitiveKind::PointerOrNumberKind) {
-        return LatticeNode::PointerOrNumber;
-      } else if (Kind == PrimitiveKind::NumberKind) {
-        return LatticeNode::Number;
-      } else if (Kind == PrimitiveKind::UnsignedKind) {
-        return LatticeNode::Unsigned;
-      } else if (Kind == PrimitiveKind::SignedKind) {
-        return LatticeNode::Signed;
-      } else if (Kind == PrimitiveKind::FloatKind) {
-        return LatticeNode::Float;
-      }
-    }
-
-    if (mlir::isa<EnumType>(T)) {
-      return LatticeNode::Enum;
-    }
-
-    if (mlir::isa<PointerType>(T)) {
-      return LatticeNode::Pointer;
-    }
-
-    // Shouldn't reach here given earlier checks
-    revng_abort("We cannot identify suitable `LatticeNode` for `Type` `T`");
-  };
-
-  // Helper function to get the distance to a common ancestor
-  uint64_t getDistanceToNode(LatticeNode From, LatticeNode To) {
-    auto Ancestors = getAncestors(From);
-
-    // We walk up the list of ancenstors counting the steps
-    for (auto [I, Ancestor] : llvm::enumerate(Ancestors)) {
-      if (Ancestor == To)
-        return I;
-    }
-
-    // In case we found no path from `From` to `To` we return a placeholder
-    // value
-    return std::numeric_limits<uint64_t>::max();
-  }
-
-  // Helper method which returns the ordered list of `Ancestor`s of a
-  // `LatticeNode`
-  std::vector<LatticeNode> getAncestors(LatticeNode N) {
-    using LN = LatticeNode;
-    switch (N) {
-    case LN::Enum:
-      return {
-        LN::Enum, LN::Unsigned, LN::Number, LN::PointerOrNumber, LN::Generic
-      };
-    case LN::Unsigned:
-      return { LN::Unsigned, LN::Number, LN::PointerOrNumber, LN::Generic };
-    case LN::Signed:
-      return { LN::Signed, LN::Number, LN::PointerOrNumber, LN::Generic };
-    case LN::Number:
-      return { LN::Number, LN::PointerOrNumber, LN::Generic };
-    case LN::Pointer:
-      return { LN::Pointer, LN::PointerOrNumber, LN::Generic };
-    case LN::PointerOrNumber:
-      return { LN::PointerOrNumber, LN::Generic };
-    case LN::Float:
-      return { LN::Float, LN::Generic };
-    case LN::Generic:
-      return { LN::Generic };
-    }
-    revng_abort("Unhandled LatticeNode");
-  }
-
-  // Helper to find least common ancestor (LCA) in the lattice
-  LatticeNode findLCA(LatticeNode A, LatticeNode B) {
-
-    // At this point, `A == B` can only be only in case we have `Enum`
-    // or `Pointer` (because they are two distinct type of the same
-    // family). Identical primitive type are caught by the `LHS == RHS` early
-    // exit check in `typeDistance`.
-    if (A == B) {
-      revng_assert(A == LatticeNode::Enum or A == LatticeNode::Pointer);
-    }
-
-    // For each node, its ordered ancestor chain from self to `Generic`
-    // (inclusive). Enum/Pointer represent *families* of
-    // distinct types, so when A == B for these, the LCA is their parent
-    // (handled via SameFamily). The
-    auto AncestorsA = getAncestors(A);
-    auto AncestorsB = getAncestors(B);
-    std::set<LatticeNode> SetB(AncestorsB.begin(), AncestorsB.end());
-
-    // When A == B, it can only be `Enum` or `Pointer`.
-    // In that case, skip self and start from the parent.
-    size_t StartIdx = (A == B) ? 1 : 0;
-    for (size_t I = StartIdx; I < AncestorsA.size(); ++I) {
-      auto AncestorI = AncestorsA.at(I);
-
-      // As soon as we reach an ancestor in common, we found the `LCA`
-      if (SetB.count(AncestorI))
-        return AncestorI;
-    }
-
-    revng_abort("LCA not found, `Generic` should always be a common ancestor");
-  }
-
-public:
-  uint64_t getTypeDistance(mlir::Type Explicit, mlir::Type Ideal) {
-
-    // Classify both types
-    LatticeNode ExplicitNode = classifyType(Explicit);
-    LatticeNode IdealNode = classifyType(Ideal);
-
-    // Find their least common ancestor (LCA)
-    LatticeNode LCA = findLCA(ExplicitNode, IdealNode);
-
-    // Distance is defined as the number of upward steps from `ExplicitNode` to
-    // LCA
-    uint64_t Distance = getDistanceToNode(ExplicitNode, LCA);
-
-    return Distance;
-  }
-};
-
-/// The `typeDistance` function is a helper function which computes the defined
-/// `TypeDistance`, according to the following criteria:
-/// If the sizes of the input types differ, this distance is just "infinity". If
-/// the inputs are not scalar, this distance is also "infinity". If they're both
-/// scalars we should use the lattice approach, based on the primitives but
-/// extended with enums and pointers. `Typedef`s are ignored. In such case, we
-/// employ the `TypeDistanceLatticeCompute` helper class to perform the
-/// computation.
+/// The `typeDistance` function computes the distance between two `Type`s.
+/// Returns 0 if the types are equal (after stripping `typedef`s), or infinity
+/// otherwise. The return type is kept as `uint64_t` to allow future refinement
+/// of the scoring criterion, enabling more fine grained control over this
+/// score.
 static uint64_t typeDistance(mlir::Type Explicit, mlir::Type Ideal) {
 
-  // First, unwrap any typedefs as they should be traversed in order to reach
-  // the underlying type
+  // Unwrap any typedefs to compare the underlying types
   while (auto TypedefExplicit = mlir::dyn_cast<TypedefType>(Explicit)) {
     Explicit = mlir::cast<mlir::Type>(TypedefExplicit.getUnderlyingType());
   }
@@ -358,25 +190,7 @@ static uint64_t typeDistance(mlir::Type Explicit, mlir::Type Ideal) {
     Ideal = mlir::cast<mlir::Type>(TypedefIdeal.getUnderlyingType());
   }
 
-  // If sizes differ, the `TypeDistance` is infinity
-  if (getTypeSize(Explicit) != getTypeSize(Ideal)) {
-    return std::numeric_limits<uint64_t>::max();
-  }
-
-  // If only one is _scalar_, the distance is defined as infinity
-  if (!isScalarType(Explicit) || !isScalarType(Ideal)) {
-    return std::numeric_limits<uint64_t>::max();
-  }
-
-  // If they're exactly the same type, `TypeDistance` is 0
-  if (Explicit == Ideal) {
-    return 0;
-  }
-
-  // In all the other cases, we compute the `TypeDistance` using an ad-hoc
-  // lattice
-  TypeDistanceLatticeCompute TDC;
-  return TDC.getTypeDistance(Explicit, Ideal);
+  return Explicit == Ideal ? 0 : std::numeric_limits<uint64_t>::max();
 }
 
 // =============================================================================
