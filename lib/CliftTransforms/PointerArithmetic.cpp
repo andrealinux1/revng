@@ -400,7 +400,7 @@ PointerArithmeticBuilder::composePtrAdd(PtrAddOp Add) {
   // We multiply the size of the `PointeeType` of the `PointerOperand` operand
   // by the `OffsetOperand` `BaseOffset`. The multiplication factor is contained
   // into the `BaseOffset` of the numeric operand.
-  auto PointerOperandType = mlir::cast<PointerType>(PointerOperand.getType());
+  auto PointerOperandType = getPointerType(PointerOperand.getType());
   auto PointeeSize = PointerOperandType.getPointeeType().getByteSize();
   PointerOperandPA->Offset.BaseOffset += OffsetOperandPA->Offset.BaseOffset
                                          * PointeeSize;

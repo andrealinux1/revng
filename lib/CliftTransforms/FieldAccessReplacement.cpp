@@ -214,8 +214,7 @@ void Replacement::replace(ExpressionOpInterface PointerToReplace,
   // access the `struct` fields and `array` members, and to generate the
   // `AddressOp` at the end of the field access substitution. We extract it
   // from the `PointerToReplace` we are processing.
-  auto PointerSize = mlir::cast<PointerType>(PointerToReplace->getResult(0)
-                                               .getType())
+  auto PointerSize = getPointerType(PointerToReplace->getResult(0).getType())
                        .getPointerSize();
 
   // Set insertion point right before the `PointerToReplace`

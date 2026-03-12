@@ -680,7 +680,7 @@ BestTraversalChooser::computeBestTraversal(ExpressionOpInterface
   std::vector<PointerArithmetic>
     ExplicitArithmetics = toExplicitArrayAccesses(Arithmetic);
 
-  mlir::Type PointeeType = mlir::cast<PointerType>(PointerToReplaceType)
+  mlir::Type PointeeType = getPointerType(PointerToReplaceType)
                              .getPointeeType();
   auto BasePtrType = getPointerType(Arithmetic.BasePointer.getType());
   revng_assert(BasePtrType);
