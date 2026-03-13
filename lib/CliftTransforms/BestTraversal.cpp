@@ -674,6 +674,15 @@ BestTraversalChooser::computeBestTraversal(ExpressionOpInterface
     return std::nullopt;
   }
 
+  // It may be that the `PointerToReplace` points to a `void 0` type, in that
+  // case we cannot provide a `Traversal` for sure
+  auto BasePtrType = getPointerType(Arithmetic.BasePointer.getType());
+  revng_assert(BasePtrType);
+  auto BaseType = BasePtrType.getPointeeType();
+  if (BaseType.getByteSize() == 0) {
+    return std::nullopt;
+  }
+
   // Expand to explicit array accesses the input `PointerArithmetic`, so that
   // the constant folded component performed by the compiler is evident in the
   // `LinearCombination` portion of `Arithmetic`
@@ -682,9 +691,6 @@ BestTraversalChooser::computeBestTraversal(ExpressionOpInterface
 
   mlir::Type PointeeType = getPointerType(PointerToReplaceType)
                              .getPointeeType();
-  auto BasePtrType = getPointerType(Arithmetic.BasePointer.getType());
-  revng_assert(BasePtrType);
-  auto BaseType = BasePtrType.getPointeeType();
 
   // Obtain the `BestTraversal` for connecting `BaseType` to `PointeeType`,
   // following one of the possible `ExplicitArithmetic`s
