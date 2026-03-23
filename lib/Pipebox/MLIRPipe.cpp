@@ -105,6 +105,7 @@ PipeOutput PureMLIRPassesPipe::run(const Model &TheModel,
   using namespace mlir::clift;
   llvm::Task T(Outgoing[0].size(), TaskName);
   mlir::PassManager PM(&Container.getContext(), FunctionOp::getOperationName());
+  PM.enableStatistics();
   auto ErrorHandler = [&](const llvm::Twine &Msg) {
     emitError(mlir::UnknownLoc::get(PM.getContext())) << Msg;
     return mlir::failure();

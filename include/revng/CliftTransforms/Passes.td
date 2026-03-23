@@ -46,6 +46,12 @@ def CliftOptimizeExpressions : Clift_Pass<"optimize-expressions",
 def CliftEmitFieldAccesses : Clift_Pass<"emit-field-accesses", "clift::FunctionOp"> {
   let summary = "Emit field accesses.";
   let constructor = "mlir::clift::createEmitFieldAccessesPass()";
+  let statistics = [
+    Statistic<"FieldAccesses", "field-accesses",
+              "Number of struct/union field accesses emitted">,
+    Statistic<"ArrayAccesses", "array-accesses",
+              "Number of array subscripts emitted">
+  ];
 }
 
 def CliftTerminalBranchComplementHoisting
