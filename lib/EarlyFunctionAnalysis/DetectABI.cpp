@@ -13,7 +13,10 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Instruction.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
+#include "llvm/PassInfo.h"
+#include "llvm/PassRegistry.h"
 #include "llvm/Support/GraphWriter.h"
 
 #include "revng/ABI/Definition.h"
@@ -136,6 +139,43 @@ static bool isWritingToMemory(llvm::Instruction &I) {
 
 using BasicBlockQueue = UniquedQueue<const BasicBlockNode *>;
 
+// Look up a registered LLVM pass by its command-line argument and return
+// a fresh instance, without requiring a link-time dependency on the
+// library that defines it. We enumerate the global `PassRegistry` rather
+// than calling `getPassInfo(StringRef)` because LLVM 16 — as built and
+// dlopen'd inside revng — populates the typeinfo-indexed `PassInfoMap`
+// reliably but not the string-indexed `PassInfoStringMap`, so the direct
+// string lookup misses plugin-registered passes. Enumeration walks the
+// typeinfo map and works.
+static llvm::Pass *createPassByArgument(llvm::StringRef Argument) {
+  struct Finder : public llvm::PassRegistrationListener {
+    llvm::StringRef Target;
+    const llvm::PassInfo *Found = nullptr;
+    explicit Finder(llvm::StringRef T) : Target(T) {}
+    void passEnumerate(const llvm::PassInfo *PI) override {
+      if (Found == nullptr and PI->getPassArgument() == Target)
+        Found = PI;
+    }
+  };
+
+  Finder F(Argument);
+  llvm::PassRegistry::getPassRegistry()->enumerateWith(&F);
+  return F.Found != nullptr ? F.Found->createPass() : nullptr;
+}
+
+// Invoke the `inline-helpers` module pass on `M` via a lookup against the
+// legacy pass registry, so that we don't need a link-time dependency on
+// `revngFunctionIsolation` (which would be cyclic).
+static void runInlineHelpers(llvm::Module &M) {
+  llvm::Pass *P = createPassByArgument("inline-helpers");
+  revng_assert(P != nullptr,
+               "inline-helpers pass is not registered; "
+               "revngFunctionIsolation was not loaded");
+  llvm::legacy::PassManager Manager;
+  Manager.add(P);
+  Manager.run(M);
+}
+
 class DetectABI {
 private:
   using BasicBlockToNodeMap = llvm::DenseMap<llvm::BasicBlock *,
@@ -170,7 +210,7 @@ public:
 
 public:
   void run() {
-    llvm::Task Task(6, "DetectABI");
+    llvm::Task Task(7, "DetectABI");
     Task.advance("computeApproximateCallGraph");
     computeApproximateCallGraph();
 
@@ -184,6 +224,21 @@ public:
     // 4. the CFG (specifically, which indirect jumps are returns);
     Task.advance("preliminaryFunctionAnalysis");
     preliminaryFunctionAnalysis();
+
+    // Inline helpers transitively reaching the QEMU softfloat library so
+    // that the ABI analysis below can see the register reads and writes
+    // performed by those helpers. Without this, floating-point registers
+    // (e.g. `xmm0`) used exclusively inside helpers would stay hidden
+    // behind opaque helper calls and be missed by `analyzeABI`.
+    //
+    // The pass is looked up by its registered name rather than linked
+    // against: `revngFunctionIsolation` (which defines it) already
+    // depends on `revngEarlyFunctionAnalysis`, so a direct link
+    // dependency would introduce a cycle. At runtime the pass is always
+    // registered because `revngFunctionIsolation.so` is loaded by every
+    // entry point that reaches `DetectABI`.
+    Task.advance("inline-helpers");
+    runInlineHelpers(M);
 
     // Run the (fixed-point) analysis of the ABI of each function
     Task.advance("analyzeABI");
